@@ -1,0 +1,24 @@
+@use "googleButton";
+@use "variables";
+
+// Buttons
+@mixin button-style($bg-color, $font-size: 1rem, $text-color: white, $padding: 0.5rem 0.5rem) {
+  background-color: $bg-color;
+  color: $text-color;
+  border: none;
+  border-radius: 5px;
+  padding: $padding;
+  font-size: $font-size;
+  font-weight: bold;
+  cursor: pointer;
+  margin: 5px;
+  transition: background-color 0.3s ease;
+
+  &:hover {
+    background-color: scale-color($bg-color, $lightness: -10%);
+  }
+}
+
+.btn-google-blue {
+  @include button-style(variables.$google-blue);
+}

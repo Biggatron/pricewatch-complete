@@ -1,0 +1,41 @@
+$nav-text-main-color: rgb(100, 100, 100);
+$nav-text-hover-color: rgb(70, 70, 70);
+$nav-text-focused-color: rgb(70, 70, 70);
+
+.navbar {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+
+  .navbar-group {
+    padding: 0px;
+    display: flex;
+    flex-direction: row;
+    
+    .navbar-item {
+      margin: 10px;
+      height: 100%;
+      font-size: 1.2em;
+      color: $nav-text-main-color;
+    }
+    .navbar-highlight {
+      font-weight: bold;
+    }
+    .navbar-item:hover {
+      color: $nav-text-hover-color;
+    }
+  }
+}
+
+a {
+  height:100%;
+  text-decoration: none;
+}
+
+a:visited { 
+  color: $nav-text-main-color; 
+ }
+
+li {
+  list-style-type: none;
+}

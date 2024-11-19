@@ -1,0 +1,22 @@
+
+<nav class="navbar">
+  <ul class="navbar-group">
+    <li>
+      <a class="navbar-item <%= navItem === 'home' ? 'navbar-highlight' : 'nav-link' %>" href="/">Home</a>
+    </li>
+    <li>
+      <a class="navbar-item <%= navItem === 'other' ? 'navbar-highlight' : 'nav-link' %>" href="/other">Other stuff</a>
+    </li>
+  </ul>
+  <ul class="navbar-group">
+    <li>
+      <% if (user) { %>
+      <a class="navbar-item <%= navItem === 'profile' ? 'navbar-highlight' : 'nav-link' %>" href="/profile">
+          <%= user.name %>
+      </a>
+      <% } else { %>
+      <a class="navbar-item <%= navItem === 'login' ? 'navbar-highlight' : 'nav-link' %>" href="/auth/login">Login</a>
+      <% } %>
+    </li>
+  </ul>
+</nav>

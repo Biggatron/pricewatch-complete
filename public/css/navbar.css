@@ -1,0 +1,35 @@
+.navbar {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+.navbar .navbar-group {
+  padding: 0px;
+  display: flex;
+  flex-direction: row;
+}
+.navbar .navbar-group .navbar-item {
+  margin: 10px;
+  height: 100%;
+  font-size: 1.2em;
+  color: rgb(100, 100, 100);
+}
+.navbar .navbar-group .navbar-highlight {
+  font-weight: bold;
+}
+.navbar .navbar-group .navbar-item:hover {
+  color: rgb(70, 70, 70);
+}
+
+a {
+  height: 100%;
+  text-decoration: none;
+}
+
+a:visited {
+  color: rgb(100, 100, 100);
+}
+
+li {
+  list-style-type: none;
+}

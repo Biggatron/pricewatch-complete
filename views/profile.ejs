@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', {navItem: 'profile'}); %>
+</header>
+
+<main>
+  <div class="content-container">
+    <div class="space-between-row vertical-align-content">
+      <h1>Welcome to your profile, <%= user.name.split(' ').shift() %></h1>
+      <div><a href="/auth/logout"><button class="btn">Logout</button></a></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>

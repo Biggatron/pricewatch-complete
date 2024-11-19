@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', {navItem: 'login'}); %>
+</header>
+  
+<main>
+  <div class="content-container">
+    <div class="center-col-container">
+      <div class="center-col-container">
+        <div class="google-btn">
+          <div class="google-icon-wrapper">
+            <img class="google-icon" src="/images/google_logo.svg"/>
+          </div>
+          <p class="btn-text"><a href="/auth/google">Sign up with google</a></p>
+        </div>
+        <p>or</p>
+        <div class="signup-input-container">
+          <div>
+            <input class="input-text" id="email" type="email" autocomplete="email" placeholder="Email">
+          </div>
+          <div>
+            <input class="input-text" id="name" type="text" autocomplete="Name" placeholder="Name">
+          </div>
+          <div>
+            <input class="input-text" id="new-password" type="password" autocomplete="new-password" placeholder="Password">
+          </div>
+          <div>
+            <input class="input-text" id="new-password-repeated" type="password" autocomplete="new-password" placeholder="Repeate password">
+          </div>
+        </div>
+        <p id="password-error" style="color:red"></p>
+        <div class="center-self">
+          <button class="btn-google-blue" onClick="signUp()">Sign up</button>
+        </div>
+        <p>
+          <a href="/auth/login">Already have an account?</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>
+
+<script>
+  let loaderEl = document.getElementById("loader");
+
+  function showLoader() {
+    loaderEl.classList.remove('display-none');
+  }
+
+  function hideLoader() {
+    loaderEl.classList.add('display-none');
+  }
+
+  function signUp() {
+    let email = document.getElementById('email').value;
+    let name = document.getElementById('name').value;
+    let password = document.getElementById('new-password').value;
+    let passwordRepeated = document.getElementById('new-password-repeated').value;
+    let passwordErrorEl = document.getElementById('password-error');
+    
+    passwordErrorEl.innerText = "";
+
+    if (password !== passwordRepeated) {
+      passwordErrorEl.innerHTML = "Passwords do not match";
+      return;
+    } else if (password.length < 8) {
+      passwordErrorEl.innerHTML = "Password must be at least 8 characters long";
+      return;
+    }
+
+    let newUser = {
+      email: email,
+      password: password,
+      name: name
+    }
+
+    showLoader();
+    postData('/auth/local/signup', newUser).then(returnData => {
+      hideLoader();
+      if (returnData.error) {
+        alert('signup failed')
+      } else {
+        window.location.href = '/profile';        
+      }
+      console.log(returnData); // JSON data parsed by `data.json()` call
+    });
+  }
+</script>

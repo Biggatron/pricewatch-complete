@@ -1,0 +1,234 @@
+.google-btn {
+  cursor: pointer;
+  width: 184px;
+  height: 42px;
+  background-color: #4285f4;
+  border-radius: 2px;
+  box-shadow: 0 3px 4px 0 rgba(0, 0, 0, 0.25);
+}
+.google-btn a {
+  color: white;
+}
+.google-btn a:visited {
+  color: white;
+}
+.google-btn .google-icon-wrapper {
+  position: absolute;
+  margin-top: 1px;
+  margin-left: 1px;
+  width: 40px;
+  height: 40px;
+  border-radius: 2px;
+  background-color: white;
+}
+.google-btn .google-icon {
+  position: absolute;
+  margin-top: 11px;
+  margin-left: 11px;
+  width: 18px;
+  height: 18px;
+}
+.google-btn .btn-text {
+  float: right;
+  margin: 11px 11px 0 0;
+  color: white;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  font-family: "Roboto";
+}
+.google-btn:hover {
+  box-shadow: 0 0 6px #4285f4;
+}
+.google-btn:active {
+  background: #1669F2;
+}
+
+.btn-google-blue {
+  background-color: #4285f4;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 0.5rem 0.5rem;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  margin: 5px;
+  transition: background-color 0.3s ease;
+}
+.btn-google-blue:hover {
+  background-color: rgb(36.705, 114.09, 242.295);
+}
+
+/* Core css, HTML, Body*/
+.body-container {
+  width: 90%;
+  max-width: 1200px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.input-text {
+  margin-top: auto;
+  margin-bottom: auto;
+  height: 30px;
+  vertical-align: middle;
+  font-size: 16px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.content-container {
+  background-color: #f2eeee;
+  margin-bottom: 2rem;
+  padding: 2rem 2rem;
+  border-radius: 0.3rem;
+  height: auto;
+  justify-self: center;
+  min-width: 80%;
+  min-height: 80%;
+}
+
+.center-row-container {
+  display: flex;
+  justify-content: center;
+  flex-direction: row;
+}
+
+.space-between-row {
+  display: flex;
+  justify-content: space-between;
+  flex-direction: row;
+}
+
+.center-col-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.center-self {
+  display: flex;
+  align-self: center;
+  justify-self: center;
+  flex-direction: column;
+}
+
+.container {
+  padding-top: 10px;
+}
+
+.margin-auto {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.vertical-align-content {
+  display: flex;
+  align-items: center;
+}
+
+.vertical-shrink-center-container {
+  display: flex;
+  flex-direction: row;
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
+.display-none {
+  display: none !important;
+}
+
+/* The snackbar - position it at the bottom and in the middle of the screen */
+.snackbar {
+  visibility: hidden; /* Hidden by default. Visible on click */
+  min-width: 250px; /* Set a default minimum width */
+  margin-left: -125px; /* Divide value of min-width by 2 */
+  background-color: #ffb758;
+  color: #fff; /* White text color */
+  text-align: center; /* Centered text */
+  border-radius: 5px; /* Rounded borders */
+  padding: 16px; /* Padding */
+  position: fixed; /* Sit on top of the screen */
+  z-index: 1; /* Add a z-index if needed */
+  left: 50%; /* Center the snackbar */
+  bottom: 30px; /* 30px from the bottom */
+}
+
+/* Show the snackbar when clicking on a button (class added with JavaScript) */
+.snackbar-show {
+  visibility: visible; /* Show the snackbar */
+  /* Add animation: Take 0.5 seconds to fade in and out the snackbar.
+  However, delay the fade out process for 2.5 seconds */
+  -webkit-animation: fadein 0.5s, fadeout 0.5s 2.5s;
+  animation: fadein 0.5s, fadeout 0.5s 2.5s;
+}
+
+/* Animations to fade the snackbar in and out */
+@-webkit-keyframes fadein {
+  from {
+    bottom: 0;
+    opacity: 0;
+  }
+  to {
+    bottom: 30px;
+    opacity: 1;
+  }
+}
+@keyframes fadein {
+  from {
+    bottom: 0;
+    opacity: 0;
+  }
+  to {
+    bottom: 30px;
+    opacity: 1;
+  }
+}
+@-webkit-keyframes fadeout {
+  from {
+    bottom: 30px;
+    opacity: 1;
+  }
+  to {
+    bottom: 0;
+    opacity: 0;
+  }
+}
+@keyframes fadeout {
+  from {
+    bottom: 30px;
+    opacity: 1;
+  }
+  to {
+    bottom: 0;
+    opacity: 0;
+  }
+}
+/* Spinning loader */
+.loader {
+  border: 0.5em solid #ced1d2; /* Light grey */
+  border-top: 0.5em solid #ffb758; /* Blue */
+  border-radius: 50%;
+  width: 2em;
+  height: 2em;
+  animation: spin 1s linear infinite;
+  position: absolute; /* Sit on top of the screen */
+  z-index: 1; /* Add a z-index if needed */
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  margin: auto;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}

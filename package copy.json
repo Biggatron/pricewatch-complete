@@ -1,9 +1,10 @@
 {
-  "name": "pricewatch-complete",
+  "name": "server",
   "version": "1.0.0",
-  "description": "Monitor online prices",
+  "description": "ClimbCompManager web app - server and frontend",
   "main": "app.js",
   "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon app.js",
     "watch:sass": "sass --no-source-map --watch scss/:public/css/",
     "setup": "node db/setup.js"
@@ -17,10 +18,12 @@
     "passport": "^0.5.2",
     "passport-google-oauth2": "^0.2.0",
     "passport-local": "^1.0.0",
-    "pg": "^8.7.3"
+    "pg": "^8.7.3",
+    "sass": "^1.80.5",
+    "socket.io": "^4.5.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.15",
-    "sass": "^1.81.0"
+    "sass": "^1.80.5",
+    "nodemon": "^2.0.15"
   }
 }

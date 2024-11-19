@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', {navItem: 'login'}); %>
+</header>
+  
+<main>
+  <div class="content-container">
+    <div class="center-col-container">
+      <div class="google-btn">
+        <div class="google-icon-wrapper">
+          <img class="google-icon" src="/images/google_logo.svg"/>
+        </div>
+        <p class="btn-text"><a href="/auth/google">Sign in with google</a></p>
+      </div>
+      <p>or</p>
+      <div class="center-col-container">
+        <div class="center-row-container">
+          <input class="input-text" id="email" type="text" autocomplete="email" placeholder="Email">
+        </div>
+        <div class="center-row-container">
+          <input class="input-text" id="password" type="password" autocomplete="password" placeholder="Password">
+        </div>
+        <p id=incorrectUsernameAndPassText style="color: red;"></p>
+        <button class="btn-google-blue" onClick="login()">Login</button>
+      </div>
+      Don't have an account yet?<a href="/auth/signup">Click here to signup!</a>
+    </div>
+  </div>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>
+<script>
+  
+  let loaderEl = document.getElementById("loader");
+  let incorrectUsernameAndPassTextEl = document.getElementById("incorrectUsernameAndPassText");
+
+  function showLoader() {
+    loaderEl.classList.remove('display-none');
+  }
+
+  function hideLoader() {
+    loaderEl.classList.add('display-none');
+  }
+
+  function login() {
+    let email = document.getElementById('email').value;
+    let password = document.getElementById('password').value;
+    incorrectUsernameAndPassText.innerText = ""; 
+    
+    let user = {
+      email: email,
+      password: password
+    }
+
+    showLoader();
+    //try catch incorrect username og pass
+    postData('/auth/local/login', user).then(response => {
+      hideLoader();
+      if (response.redirected) { return };
+      if (response.status === 401) {
+        alert(response.message);
+      }
+    }).catch(error => {
+      hideLoader();
+      if (error === "Incorrect username or password") {
+        incorrectUsernameAndPassTextEl.innerText = error;
+      } else {
+        alert(error);
+      }
+    });
+  }
+</script>

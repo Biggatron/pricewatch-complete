@@ -1,5 +1,5 @@
 module.exports = {
     crawler: {
-      intervalTime: 1000*10 // milliseconds
+      intervalTime: 1000*14400 // milliseconds // Every four hours
     }
   }

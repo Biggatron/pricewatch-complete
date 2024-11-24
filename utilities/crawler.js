@@ -11,7 +11,7 @@ module.exports = {
   updatePrices: function () {
      console.log({intervalTime: constants.crawler.intervalTime});
      getAndUpdatePrices();
-     //setInterval(getAndUpdatePrices, constants.crawler.intervalTime)
+     setInterval(getAndUpdatePrices, constants.crawler.intervalTime)
   },
   extractNumber,
   findAndSavePrices

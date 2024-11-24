@@ -1,35 +1,67 @@
 .navbar {
+  position: relative; /* Establish a reference for absolute positioning */
   display: flex;
   flex-direction: row;
   justify-content: space-between;
+  align-items: center;
+  background-color: #ffb758;
+  height: 60px; /* Define navbar height */
 }
 .navbar .navbar-group {
-  padding: 0px;
   display: flex;
   flex-direction: row;
+  margin: 0; /* Remove extra spacing */
+  padding: 0; /* Remove extra padding */
+  height: 100%; /* Match navbar height */
+  align-items: center;
+}
+.navbar .navbar-group li {
+  list-style-type: none;
+  height: 100%;
+  display: flex;
+  align-items: center;
 }
 .navbar .navbar-group .navbar-item {
-  margin: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center; /* Center content inside the box */
   height: 100%;
+  padding: 0 20px; /* Add horizontal padding for spacing */
   font-size: 1.2em;
-  color: rgb(100, 100, 100);
+  color: white;
+  text-decoration: none;
+}
+.navbar .navbar-group .navbar-item:hover {
+  background-color: #f39c12;
 }
 .navbar .navbar-group .navbar-highlight {
   font-weight: bold;
 }
-.navbar .navbar-group .navbar-item:hover {
-  color: rgb(70, 70, 70);
+.navbar .navbar-group .button-item {
+  border: none;
+  background: none;
+  color: white;
+  cursor: pointer;
+  text-align: center;
+  font-size: 1.2em;
 }
-
-a {
-  height: 100%;
-  text-decoration: none;
+.navbar .navbar-group .button-item:hover {
+  background-color: #f39c12;
 }
-
-a:visited {
-  color: rgb(100, 100, 100);
+.navbar .navbar-title {
+  position: absolute; /* Place the title in the exact middle */
+  top: 50%; /* Vertically center relative to navbar */
+  left: 50%; /* Horizontally center relative to navbar */
+  transform: translate(-50%, -50%); /* Adjust for element's size */
+  text-align: center;
 }
-
-li {
-  list-style-type: none;
+.navbar .navbar-title h1 {
+  color: white;
+  font-size: 1.5em;
+  margin: 0;
+}
+@media (max-width: 800px) {
+  .navbar .navbar-title {
+    visibility: hidden;
+  }
 }

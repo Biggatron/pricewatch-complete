@@ -2,19 +2,23 @@
   font-family: "Roboto";
   src: url("../fonts/Roboto-Regular.ttf");
 }
-html {
+html, body {
   font-family: Roboto, Verdana, sans-serif;
   height: 100%;
-}
-
-body {
-  margin-top: 0;
-  margin-bottom: 0;
-  height: 100%;
+  margin: 0;
   display: flex;
   flex-direction: column;
+  background-color: #f2eeee;
 }
 
 main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   flex: auto;
+}
+
+footer {
+  background-color: #ffb758;
+  color: white;
 }

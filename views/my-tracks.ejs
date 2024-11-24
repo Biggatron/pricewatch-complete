@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('partials/head'); %>
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('partials/header', {navItem: 'my-tracks'}); %>
+  <link rel="stylesheet" href="/css/track.css" type="text/css">
+</header>
+
+<main>  
+    <table id="track-table">
+      <thead>
+        <tr>
+          <th>Product Name</th>
+          <th>Original Price</th>
+          <th>Current Price</th>
+          <th>Active</th>
+          <th>Start Date</th>
+          <th>Change Date</th>
+          <th>Product Page</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% 
+          if (!tracks || tracks.length === 0) { 
+        %>
+          <tr>
+            <td colspan="7">No tracks to display</td>
+          </tr>
+        <% 
+          } else { 
+            tracks.forEach(track => { 
+        %>
+          <tr>
+            <td><%= track.product_name %></td>
+            <td><%= track.orig_price %></td>
+            <td style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
+              <%= track.curr_price %>
+            </td>
+            <td><%= track.active ? 'Yes' : 'No' %></td>
+            <td><%= new Date(track.created_at).toLocaleDateString() %></td>
+            <td><%= new Date(track.last_modified_at).toLocaleDateString() %></td>
+            <td><a href="<%= track.price_url %>" target="_blank">View Product</a></td>
+          </tr>
+        <% 
+            }); 
+          } 
+        %>
+      </tbody>
+    </table>
+</main>
+
+<footer>
+  <%- include('partials/footer'); %>
+</footer>
+
+</body>
+</html>
+
+<script>
+  let loaderEl = document.getElementById("loader");
+
+  function showLoader() {
+    loaderEl.classList.remove('display-none');
+  }
+
+  function hideLoader() {
+    loaderEl.classList.add('display-none');
+  }
+</script>

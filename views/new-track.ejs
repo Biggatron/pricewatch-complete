@@ -1,0 +1,137 @@
+<!DOCTYPE html> 
+<html lang="en">
+<head>
+  <%- include('partials/head'); %>
+  <link rel="stylesheet" href="/css/track.css" type="text/css">
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('partials/header', {navItem: 'new-track'}); %>
+</header>
+
+<main>
+  <div class="container">
+    <% if (!user) { %>
+    <div class="form-group">
+      <label for="email">Email:</label>
+      <input type="email" id="email" name="email" value="" placeholder="example@example.com">
+    </div>
+    <% }; %>
+    <div class="form-group">
+      <label for="url">URL:</label>
+      <input type="url" name="url" id="url" value="" placeholder="https://example.com">
+    </div>
+    <div class="form-group">
+      <label for="price">Price:</label>
+      <input type="text" name="price" id="price" placeholder="e.g. 2999">
+    </div>
+    <button class="btn" onClick="trackPrice()">Track Price</button>
+  </div>
+  <iframe id="productIframe" title="Price Selection" width="100%" height="auto" src=""></iframe>
+</main>
+
+
+<!--
+<main>
+    <div class="content">
+      <% if (!user) { %>
+      <div>
+        <label for="email">Enter your email:</label>
+        <input type="email" id="email" name="email" value="birgir.snorrason@gmail.com">
+      </div>
+      <% }; %>
+      <div>
+        <label for="url">Paste URL:</label>
+        <input type="url" name="url" id="url" value="https://elko.is/vorur/electrolux-emz725mmk-orbylgjuofn-311552/EMZ725MMK" placeholder="https://example.com"size="60">
+      </div>
+      <div>
+        <label for="price">Enter price to be tracked:</label>
+        <input type="text" name="price" id="price" placeholder="2.999,00" value="37.995">
+      </div>
+      <div>
+        <button onClick="trackPrice()">Track price</button>
+      </div>
+    </div>
+    <iframe id="productIframe" title="Price Selection" width="100%" height="auto" src=""></iframe>
+</main> 
+-->
+
+<footer>
+  <%- include('partials/footer'); %>
+</footer>
+
+</body>
+</html>
+
+<script>
+  let loaderEl = document.getElementById("loader");
+
+  let user;
+  user = '<%- JSON.stringify(user) %>';
+  if (user) {
+    user = JSON.parse(user);
+  }
+  
+  //import fetch from 'node-fetch';
+  console.log('Coockie incomming!')
+  console.log(document.cookie);
+
+
+  /* Event listener */
+  document.getElementById("url").addEventListener('input', setIframeUrl);
+
+  /* Function */
+  function setIframeUrl() {
+    document.getElementById("productIframe").src = this.value;
+  }
+  
+  function showLoader() {
+    loaderEl.classList.remove('display-none');
+  }
+
+  function hideLoader() {
+    loaderEl.classList.add('display-none');
+  }
+
+  function trackPrice() {
+    var track = {
+      email: user ? user.email : document.getElementById('email').value,
+      url: document.getElementById('url').value,
+      price: document.getElementById('price').value
+    }
+    console.log(track);
+    postTrack(track);
+  }
+
+  async function postTrack(track) {
+    console.log('About to fetch')
+    showLoader();
+    try {
+      let response = await fetch("/track",{
+        // method changes
+        method: 'POST',
+        body: JSON.stringify(track),
+        headers: {
+            "Content-type": "application/json; charset=UTF-8"
+        }
+      });
+      hideLoader();
+      //let newTrack = await response.body;
+      if (response.status === 201) {  
+        showToast('Track added successfully')
+      } else if (response.status === 401) {
+        console.log('status 401')
+        window.location.href = "/pages/login";
+      } else if (response.status === 200) {
+        showToast('Price not found on page')
+      } else {
+        showToast('Something went wrong')
+      }
+    } catch (err) {
+      hideLoader();
+      showToast('something went wrong (check console log)')
+      console.log(err)
+    } 
+  }
+</script>

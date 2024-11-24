@@ -1,13 +1,22 @@
-
 <nav class="navbar">
   <ul class="navbar-group">
     <li>
-      <a class="navbar-item <%= navItem === 'home' ? 'navbar-highlight' : 'nav-link' %>" href="/">Home</a>
+      <a class="navbar-item <%= navItem === 'new-track' ? 'navbar-highlight' : 'nav-link' %>" href="/">New track</a>
     </li>
     <li>
-      <a class="navbar-item <%= navItem === 'other' ? 'navbar-highlight' : 'nav-link' %>" href="/other">Other stuff</a>
+      <a class="navbar-item <%= navItem === 'my-tracks' ? 'navbar-highlight' : 'nav-link' %>" href="/tracklist">My tracks</a>
     </li>
+    <% if (user && user.id === 1) { %>
+      <li>
+        <button class="navbar-item button-item" onclick="updateTracks()">Update tracks</button>
+      </li>
+    <% } %>
   </ul>
+  
+  <div class="navbar-title">
+    <h1>Pricewatcher</h1>
+  </div>
+  
   <ul class="navbar-group">
     <li>
       <% if (user) { %>
@@ -20,3 +29,29 @@
     </li>
   </ul>
 </nav>
+
+<script>
+  async function updateTracks() {
+    console.log('Updating tracks')
+    try {
+      let response = await fetch("/track/update-prices",{
+        // method changes
+        method: 'POST',
+        headers: {
+            "Content-type": "application/json; charset=UTF-8"
+        }
+      });
+      //let newTrack = await response.body;
+      if (response.status === 200) {
+        showToast('Track update job started')
+      } else if (response.status === 401) {
+        window.location.href = "login.html";
+      } else {
+        showToast('Something went wrong')
+      }
+    } catch (err) {
+      showToast('something went wrong (check console log)')
+      console.log(err)
+    } 
+  }
+</script>

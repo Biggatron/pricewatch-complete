@@ -1,0 +1,119 @@
+iframe {
+  width: 100%;
+  flex: 1 1 auto;
+  border: none;
+}
+
+/****************************/
+/*      Track table         */
+/****************************/
+/* Style for table */
+table {
+  margin-top: 1rem;
+  border-collapse: collapse;
+  width: 80%;
+  border: 3px solid;
+  border-color: #333;
+  align-self: center;
+}
+
+@media (max-width: 800px) {
+  table {
+    width: 95%; /* Expand to 100% for smaller screens */
+  }
+}
+thead {
+  border-color: #333;
+}
+
+/* Style for table headers */
+th {
+  background-color: #333; /* Darker header background color */
+  color: white;
+  text-align: left;
+  padding: 8px;
+  border: 2px solid #333;
+}
+
+/* Style for table cells */
+td {
+  padding: 8px;
+  border: 1px solid;
+}
+
+/* Alternate row colors */
+tbody tr:nth-child(odd) {
+  background-color: #f9f9f9;
+}
+
+tbody tr:nth-child(even) {
+  background-color: #e0e0e0;
+}
+
+/* Style for active rows */
+tr.lower {
+  background-color: rgb(157, 255, 157);
+}
+
+/* Style for inactive rows */
+tr.higher {
+  background-color: rgb(255, 141, 141);
+}
+
+a:visited {
+  color: blue;
+}
+
+a:visited {
+  color: blue;
+}
+
+/****************************/
+/*      New Track           */
+/****************************/
+/* Variables */
+/* Fixed width for labels */
+/* General Reset */
+body, html {
+  margin: 0;
+  padding: 0;
+  background-color: #f9f9f9;
+  color: #333;
+}
+
+/* Container Styling */
+.container {
+  display: flex;
+  flex-direction: column;
+  width: 90%;
+  background-color: #eeecec;
+  max-width: 600px;
+  margin: 10px auto 0px;
+  padding: 15px;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+}
+
+/* Form Group */
+.form-group {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.form-group label {
+  width: 80px;
+  font-size: 0.9rem;
+  text-align: left; /* Align labels to the left */
+  margin-right: 10px; /* Space between label and input */
+}
+.form-group input {
+  flex: 1; /* Make input fill the remaining space */
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.form-group input::placeholder {
+  font-size: 0.9rem;
+  color: #aaa;
+}

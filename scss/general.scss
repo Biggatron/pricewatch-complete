@@ -3,12 +3,6 @@
 
 
 /* Core css, HTML, Body*/
-.body-container {
-  width: 90%;
-  max-width: 1200px;
-  margin-right: auto;
-  margin-left: auto;
-}
 
 .input-text {
   margin-top: auto;
@@ -22,15 +16,25 @@
   width: 100%;
 }
 
+.content {
+  max-width: 1200px;
+  margin: 1em;
+  align-self: center;
+}
+
 .content-container {
   background-color: variables.$color-gray-1;
-  margin-bottom: 2rem;
-  padding: 2rem 2rem;
+  padding: 2rem 0;
   border-radius: 0.3rem;
-  height: auto;
+  height: 100%;
   justify-self: center;
-  min-width: 80%;
-  min-height: 80%;
+  margin: auto;
+  width: 60%;
+}
+@media (max-width: 800px) {
+  .content-container {
+    width: 95%; /* Expand to 100% for smaller screens */
+  }
 }
 
 .center-row-container {
@@ -97,7 +101,7 @@ flex-direction: row;
   position: fixed; /* Sit on top of the screen */
   z-index: 1; /* Add a z-index if needed */
   left: 50%; /* Center the snackbar */
-  bottom: 30px; /* 30px from the bottom */
+  bottom: 40px; /* 40px from the bottom */
 }
 
 /* Show the snackbar when clicking on a button (class added with JavaScript) */
@@ -112,28 +116,28 @@ flex-direction: row;
 /* Animations to fade the snackbar in and out */
 @-webkit-keyframes fadein {
   from {bottom: 0; opacity: 0;}
-  to {bottom: 30px; opacity: 1;}
+  to {bottom: 40px; opacity: 1;}
 }
 
 @keyframes fadein {
   from {bottom: 0; opacity: 0;}
-  to {bottom: 30px; opacity: 1;}
+  to {bottom: 40px; opacity: 1;}
 }
 
 @-webkit-keyframes fadeout {
-  from {bottom: 30px; opacity: 1;}
+  from {bottom: 40px; opacity: 1;}
   to {bottom: 0; opacity: 0;}
 }
 
 @keyframes fadeout {
-  from {bottom: 30px; opacity: 1;}
+  from {bottom: 40px; opacity: 1;}
   to {bottom: 0; opacity: 0;}
 }
 
 /* Spinning loader */
 .loader {
-  border: 0.5em solid variables.$color-gray-2; /* Light grey */
-  border-top: 0.5em solid variables.$color-orange-1; /* Blue */
+  border: 0.5em solid variables.$color-gray-2;
+  border-top: 0.5em solid variables.$color-orange-1;
   border-radius: 50%;
   width: 2em;
   height: 2em;

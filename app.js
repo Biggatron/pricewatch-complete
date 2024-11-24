@@ -4,7 +4,7 @@ const cookieSession = require('cookie-session')
 const passport = require('passport')
 const authRoutes = require('./routes/auth-routes');
 const profileRoutes = require('./routes/profile-routes');
-const otherRoutes = require('./routes/other-routes');
+const trackRoutes = require('./routes/track-routes');
 const passportSetup = require('./config/passport')
 const keys = require('./config/keys');
 const errorHandler = require('./utilities/errorHandler');
@@ -56,14 +56,11 @@ app.use(function(err, req, res, next) {
 // set up routes
 app.use('/auth', authRoutes);
 app.use('/profile', profileRoutes);
-app.use('/other', otherRoutes);
-
-app.get('/', (req, res) => {
-    res.render('home', { user: req.user });
-})
+app.use('/track', trackRoutes);
+app.use('/', trackRoutes);
 
 app.use(errorHandler);
 
 server.listen(port, () => {
-  console.log(`Template app listening on port ${port}`)
+  console.log(`Price watch listening on port ${port}`)
 })

@@ -6,7 +6,7 @@
 <body class="body-container">
 
 <header>
-  <%- include('./partials/header', {navItem: 'profile'}); %>
+  <%- include('./partials/header', { navItem: 'profile' }); %>
 </header>
 
 <main>
@@ -15,12 +15,86 @@
       <h1>Welcome to your profile, <%= user.name.split(' ').shift() %></h1>
       <div><a href="/auth/logout"><button class="btn">Logout</button></a></div>
     </div>
+    <div class="profile-section">
+      <!-- Email Update Section -->
+      <div class="email-update-box">
+        <h3>Have price changes sent to your email</h3>
+        <form id="update-email-form">
+          <label for="email">Email Address:</label>
+          <input 
+            type="email" 
+            id="email" 
+            name="email" 
+            value="<%= user.email %>" 
+            placeholder="Enter your email" 
+            required>
+          <button type="submit" class="btn">Update Email</button>
+        </form>
+        <p id="email-update-status" class="status-message"></p>
+      </div>
+    </div>
   </div>
 </main>
 
 <footer>
   <%- include('./partials/footer'); %>
 </footer>
+
+<script>
+  // Client-side handler for email update
+  document.getElementById('update-email-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    const email = document.getElementById('email').value;
+    const statusMessage = document.getElementById('email-update-status');
+    statusMessage.textContent = '';
+
+    try {
+      const response = await fetch('/profile/update-user-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ newEmail: email }),
+      });
+
+      if (response.ok) {
+        statusMessage.textContent = 'Email updated successfully!';
+        statusMessage.style.color = 'green';
+      } else {
+        const errorData = await response.json();
+        statusMessage.textContent = errorData.message || 'Failed to update email.';
+        statusMessage.style.color = 'red';
+      }
+    } catch (error) {
+      console.error('Error updating email:', error);
+      statusMessage.textContent = 'An error occurred while updating the email.';
+      statusMessage.style.color = 'red';
+    }
+  });
+</script>
+
+<style>
+  .email-update-box {
+    max-width: 400px;
+    margin-top: 20px;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+  }
+  .email-update-box input {
+    width: calc(100% - 20px);
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  .status-message {
+    margin-top: 10px;
+    font-size: 0.9rem;
+  }
+</style>
 
 </body>
 </html>

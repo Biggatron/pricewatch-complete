@@ -43,16 +43,28 @@
   background: #1669F2;
 }
 
+.btn {
+  background-color: #ffb758;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 0.5rem;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+.btn:hover {
+  background-color: rgb(255, 168.2119760479, 53.7);
+}
+
 .btn-google-blue {
   background-color: #4285f4;
   color: white;
   border: none;
-  border-radius: 5px;
+  border-radius: 4px;
   padding: 0.5rem 0.5rem;
   font-size: 1rem;
-  font-weight: bold;
   cursor: pointer;
-  margin: 5px;
   transition: background-color 0.3s ease;
 }
 .btn-google-blue:hover {
@@ -60,13 +72,6 @@
 }
 
 /* Core css, HTML, Body*/
-.body-container {
-  width: 90%;
-  max-width: 1200px;
-  margin-right: auto;
-  margin-left: auto;
-}
-
 .input-text {
   margin-top: auto;
   margin-bottom: auto;
@@ -79,17 +84,27 @@
   width: 100%;
 }
 
-.content-container {
-  background-color: #f2eeee;
-  margin-bottom: 2rem;
-  padding: 2rem 2rem;
-  border-radius: 0.3rem;
-  height: auto;
-  justify-self: center;
-  min-width: 80%;
-  min-height: 80%;
+.content {
+  max-width: 1200px;
+  margin: 1em;
+  align-self: center;
 }
 
+.content-container {
+  background-color: #f2eeee;
+  padding: 2rem 0;
+  border-radius: 0.3rem;
+  height: 100%;
+  justify-self: center;
+  margin: auto;
+  width: 60%;
+}
+
+@media (max-width: 800px) {
+  .content-container {
+    width: 95%; /* Expand to 100% for smaller screens */
+  }
+}
 .center-row-container {
   display: flex;
   justify-content: center;
@@ -154,7 +169,7 @@
   position: fixed; /* Sit on top of the screen */
   z-index: 1; /* Add a z-index if needed */
   left: 50%; /* Center the snackbar */
-  bottom: 30px; /* 30px from the bottom */
+  bottom: 40px; /* 40px from the bottom */
 }
 
 /* Show the snackbar when clicking on a button (class added with JavaScript) */
@@ -173,7 +188,7 @@
     opacity: 0;
   }
   to {
-    bottom: 30px;
+    bottom: 40px;
     opacity: 1;
   }
 }
@@ -183,13 +198,13 @@
     opacity: 0;
   }
   to {
-    bottom: 30px;
+    bottom: 40px;
     opacity: 1;
   }
 }
 @-webkit-keyframes fadeout {
   from {
-    bottom: 30px;
+    bottom: 40px;
     opacity: 1;
   }
   to {
@@ -199,7 +214,7 @@
 }
 @keyframes fadeout {
   from {
-    bottom: 30px;
+    bottom: 40px;
     opacity: 1;
   }
   to {
@@ -209,8 +224,8 @@
 }
 /* Spinning loader */
 .loader {
-  border: 0.5em solid #ced1d2; /* Light grey */
-  border-top: 0.5em solid #ffb758; /* Blue */
+  border: 0.5em solid #ced1d2;
+  border-top: 0.5em solid #ffb758;
   border-radius: 50%;
   width: 2em;
   height: 2em;

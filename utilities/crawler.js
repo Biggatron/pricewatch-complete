@@ -116,7 +116,7 @@ async function getRenderedHTML(url) {
       // Close the browser
       await browser.close();
     
-      saveHTMLFile(html, url); // Used for debugging
+      // saveHTMLFile(html, url); // Used for debugging
       return html;
     } catch (error) {
       attempts++;
@@ -156,19 +156,26 @@ async function findPriceFromDiv(html, track) {
   }
   // If matching full before and after price html then try only the closest portion
   if (!matches || !matches[1]) {
-    let searchString = `${priceDivBeforeAfter[0].slice(-50)}(.*?)<`;
+    let searchString = `${priceDivBeforeAfter[0].slice(-100)}(.*?)<`;
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, 50)}`;
+    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, 100)}`;
     matches = html.match(searchString);
   }
-  if (!matches || !matches[1]) {
+
+  // If match is not found or match is over 500 characters long
+  if (!matches || !matches[1] || matches[1].length >= 500) { 
     console.log('Match not found - Setting track as inactive');
     setTrackAsInactive(track);
     return;
   } 
+
+  // If numer has more than 20 digits then something went wrong in matching
   let match = extractNumber(matches[1]);
+  if (match.length > 20) {
+    match = ''; 
+  }
   console.log({ 
     match: matches[1],
     cleanMatch: match

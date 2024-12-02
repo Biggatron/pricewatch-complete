@@ -3,6 +3,6 @@ module.exports = {
       intervalTime: 1000*3600*24 // milliseconds // Every 24 hours
     },
     email: {
-      sendEmail: false
+      sendEmail: true
     }
   }

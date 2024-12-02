@@ -33,6 +33,7 @@ async function getAndUpdatePrices() {
     } else {
       html = await getHTML(track.price_url);
     } 
+    saveHTMLFile(html, track.price_url);
     findPriceFromDiv(html, track)
   }
 }
@@ -138,7 +139,7 @@ function saveHTMLFile(html, url) {
 
 async function findPriceFromDiv(html, track) {
   console.log('Updating price for ' + track.product_name)
-  let htmlBeforeAfter = [];
+  let priceDivBeforeAfter = [];
 
   // Try to find exact match
   let matches = html.match(track.price_div);
@@ -151,8 +152,7 @@ async function findPriceFromDiv(html, track) {
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    let searchString = `>(.*?)${priceDivBeforeAfter[1]}`;
-    matches = html.match(searchString);
+    matches = findHTMLSubstringRight(html, priceDivBeforeAfter[1]);
   }
   // If matching full before and after price html then try only the closest portion
   if (!matches || !matches[1]) {
@@ -160,8 +160,7 @@ async function findPriceFromDiv(html, track) {
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize)}`;
-    matches = html.match(searchString);
+    matches = findHTMLSubstringRight(hmtl, priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize));
   }
 
   // If match is not found or match is over 500 characters long
@@ -180,15 +179,19 @@ async function findPriceFromDiv(html, track) {
     match: matches[1],
     cleanMatch: match
   });
-  // If tracked price has changed we update database and send email to user
-  if (match !== track.curr_price && isNumeric(match)) {
-    // If price was found then track should be active
-    track.active = true;
-    updatePrice(match, track);
 
-    // Update track object with new price before sending email
-    track.curr_price = match;
-    sendPriceUpdateEmail(track);
+  // If tracked price has changed we update database and send email to user
+  if (isNumeric(match)) {
+    if (match !== track.curr_price) {
+      updatePrice(match, track);
+
+      // Update track object with new price before sending email
+      track.curr_price = match;
+      sendPriceUpdateEmail(track);  
+    }
+    if (!track.active) {
+      setTrackAsActive(track);
+    }
   } else {
     console.log('Match found is not a number - Setting track as inactive');
     setTrackAsInactive(track);
@@ -196,13 +199,40 @@ async function findPriceFromDiv(html, track) {
   }
 };
 
+
+ // Finds an unknown substring in a string given a known substring to the right
+ // and a known character immediately before the unknown substring.
+ function findHTMLSubstringRight(html, knownRightSubstring) {
+  // Step 1: Find the position of the known substring to the right
+  const rightSubstringIndex = html.search(knownRightSubstring);
+  if (rightSubstringIndex === -1) {
+    return null;
+  }
+
+  // Step 2: Search backwards from the known substring for the `>` character
+  const beforeIndex = html.lastIndexOf('>', rightSubstringIndex);
+  if (beforeIndex === -1) {
+    return null;
+  }
+
+  // Step 3: Extract the unknown substring
+  const unknownSubstring = html.slice(beforeIndex + 1, rightSubstringIndex);
+  return [null, unknownSubstring.trim()];
+} 
+
 async function setTrackAsInactive(track) {
-  console.log('Uppfæra track (inactive): ' + track.id)
   const compResult = await query(
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [false, new Date(), track.id]
   );
   sendTrackInactiveEmail(track);
+}
+
+async function setTrackAsActive(track) {
+  const compResult = await query(
+    'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
+    [true, new Date(), track.id]
+  );
 }
 
 async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
@@ -380,8 +410,8 @@ async function trackExists(track) {
 async function updatePrice(newPrice, track) {
   console.log(`UpdatePrice: trackId=${track.id} newPrice=${newPrice}`);
   const compResult = await query(
-    'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2, "active" = $3 WHERE "id" = $4',
-    [newPrice, new Date(), track.active, track.id]
+    'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2 WHERE "id" = $3',
+    [newPrice, new Date(), track.id]
   );
 }
 
@@ -428,7 +458,7 @@ async function sendPriceUpdateEmail(track) {
     delivered: false,
     created_at: new Date(),
     subject: `Price change: ${track.product_name}`,
-    body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}.`
+    body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}. View product here: ${track.price_url}`
   };
   sendEmail(email);
 }

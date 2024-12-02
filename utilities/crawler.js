@@ -8,15 +8,15 @@ const constants = require('../config/const');
 const nodemailer = require('nodemailer');
 
 module.exports = {
-  updatePrices: function () {
-     console.log({intervalTime: constants.crawler.intervalTime});
-     getAndUpdatePrices();
-     setInterval(getAndUpdatePrices, constants.crawler.intervalTime)
-  },
+  updatePrices,
   extractNumber,
   findAndSavePrices
 };
- 
+
+function updatePrices() {
+  getAndUpdatePrices();
+}
+
 async function getAndUpdatePrices() {
   let html = '';
   const result = await query(
@@ -116,7 +116,7 @@ async function getRenderedHTML(url) {
       // Close the browser
       await browser.close();
     
-      //saveHTMLFile(html, url); // Used for debugging
+      saveHTMLFile(html, url); // Used for debugging
       return html;
     } catch (error) {
       attempts++;
@@ -137,22 +137,55 @@ function saveHTMLFile(html, url) {
 }
 
 async function findPriceFromDiv(html, track) {
+  console.log('Updating price for ' + track.product_name)
+  let htmlBeforeAfter = [];
+
+  // Try to find exact match
   let matches = html.match(track.price_div);
+
+  // If exact match failes then try matching html before price, then after price
+  // This can happen when price is discounted and a before price or a discount percentage div is added
+  if (!matches || !matches[1]) {
+    priceDivBeforeAfter = track.price_div.split("(.*?)");
+    let searchString = `${priceDivBeforeAfter[0]}(.*?)<`;
+    matches = html.match(searchString);
+  }
+  if (!matches || !matches[1]) {
+    let searchString = `>(.*?)${priceDivBeforeAfter[1]}`;
+    matches = html.match(searchString);
+  }
+  // If matching full before and after price html then try only the closest portion
+  if (!matches || !matches[1]) {
+    let searchString = `${priceDivBeforeAfter[0].slice(-50)}(.*?)<`;
+    matches = html.match(searchString);
+  }
+  if (!matches || !matches[1]) {
+    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, 50)}`;
+    matches = html.match(searchString);
+  }
   if (!matches || !matches[1]) {
     console.log('Match not found - Setting track as inactive');
     setTrackAsInactive(track);
     return;
   } 
   let match = extractNumber(matches[1]);
-  console.log({ match: match});
-  console.log({ cleanMatch: extractNumber(match)});
+  console.log({ 
+    match: matches[1],
+    cleanMatch: match
+  });
   // If tracked price has changed we update database and send email to user
-  if (match !== track.curr_price) {
+  if (match !== track.curr_price && isNumeric(match)) {
+    // If price was found then track should be active
+    track.active = true;
     updatePrice(match, track);
 
     // Update track object with new price before sending email
     track.curr_price = match;
-    sendEmail(track);
+    sendPriceUpdateEmail(track);
+  } else {
+    console.log('Match found is not a number - Setting track as inactive');
+    setTrackAsInactive(track);
+    return;
   }
 };
 
@@ -162,6 +195,7 @@ async function setTrackAsInactive(track) {
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [false, new Date(), track.id]
   );
+  sendTrackInactiveEmail(track);
 }
 
 async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
@@ -337,15 +371,47 @@ async function trackExists(track) {
 }
 
 async function updatePrice(newPrice, track) {
-  console.log('Uppfæra track (price): ' + track.id)
-  console.log(newPrice)
+  console.log(`UpdatePrice: trackId=${track.id} newPrice=${newPrice}`);
   const compResult = await query(
-    'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2 WHERE "id" = $3',
-    [newPrice, new Date(), track.id]
+    'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2, "active" = $3 WHERE "id" = $4',
+    [newPrice, new Date(), track.active, track.id]
   );
 }
 
-async function sendEmail(track) {
+async function sendEmail(email) {
+  if (constants.email.sendEmail) {
+    try {
+      // Create a transporter
+      const transporter = nodemailer.createTransport({
+        service: keys.email.service,
+        auth: {
+          user: keys.email.address, 
+          pass: keys.email.password,   // App password or your email password
+        },
+      });
+
+      // Email options
+      const mailOptions = {
+        from: keys.email.address, // Sender email
+        to: email.email,          // Recipient email
+        subject: email.subject,   // Email subject
+        text: email.body,         // Plain text message
+      };
+
+      // Send the email
+      const info = await transporter.sendMail(mailOptions);
+      
+      // Email sent successfully
+      email.delivered = true;
+      console.log('Email sent: ' + info.response);
+    } catch (error) {
+      console.error('Error sending email: ', error);
+    }
+  }
+  await insertEmail(email);
+}
+
+async function sendPriceUpdateEmail(track) {
   let email = {
     track_id: track.id,
     product_name: track.product_name,
@@ -353,38 +419,26 @@ async function sendEmail(track) {
     curr_price: track.curr_price,
     email: track.email,
     delivered: false,
-    created_at: new Date()
+    created_at: new Date(),
+    subject: `Price change: ${track.product_name}`,
+    body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}.`
   };
+  sendEmail(email);
+}
 
-  try {
-    // Create a transporter
-    const transporter = nodemailer.createTransport({
-      service: keys.email.service,
-      auth: {
-        user: keys.email.address, 
-        pass: keys.email.password,   // App password or your email password
-      },
-    });
-
-    // Email options
-    const mailOptions = {
-      from: keys.email.address, // Sender email
-      to: track.email,           // Recipient email
-      subject: `Price change: ${track.product_name}`,             // Email subject
-      text: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}.`,                // Plain text message
-    };
-
-    // Send the email
-    const info = await transporter.sendMail(mailOptions);
-    
-    // Email sent successfully
-    email.delivered = true;
-    console.log('Email sent: ' + info.response);
-  } catch (error) {
-    console.error('Error sending email: ', error);
-  }
-
-  await insertEmail(email);
+async function sendTrackInactiveEmail(track) {
+  let email = {
+    track_id: track.id,
+    product_name: track.product_name,
+    orig_price: track.orig_price,
+    curr_price: null,
+    email: track.email,
+    delivered: false,
+    created_at: new Date(),
+    subject: `Possible price change: ${track.product_name}`,
+    body: `Price of "${track.product_name}" was not found on product page. Original price was ${track.orig_price}. This could indicate a price change some other product change.`
+  };
+  sendEmail(email);
 }
 
 async function insertEmail(email) {
@@ -417,5 +471,8 @@ function extractNumber(price) {
 
 function escapeRegex(string) {
   return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
-  //return string.replace(/[()]/g, '\\$&');
+}
+
+function isNumeric(value) {
+  return /^\d+$/.test(value);
 }

@@ -8,6 +8,8 @@ const trackRoutes = require('./routes/track-routes');
 const passportSetup = require('./config/passport')
 const keys = require('./config/keys');
 const errorHandler = require('./utilities/errorHandler');
+const crawler = require('./utilities/crawler');
+const constants = require('./config/const');
 
 const app = express();
 const server = http.createServer(app);
@@ -64,3 +66,6 @@ app.use(errorHandler);
 server.listen(port, () => {
   console.log(`Price watch listening on port ${port}`)
 })
+
+// Set interval to run update price checks every 24 hours 
+setInterval(() => updatePrices(), constants.crawler.intervalTime);

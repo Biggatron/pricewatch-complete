@@ -1,8 +1,9 @@
 module.exports = {
     crawler: {
-      intervalTime: 1000*3600*24 // milliseconds // Every 24 hours
+      intervalTime: 1000*3600*24, // milliseconds // Every 24 hours
+      htmlMinMatchSize: 50
     },
     email: {
-      sendEmail: true
+      sendEmail: false
     }
   }

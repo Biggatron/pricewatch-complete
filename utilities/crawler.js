@@ -156,11 +156,11 @@ async function findPriceFromDiv(html, track) {
   }
   // If matching full before and after price html then try only the closest portion
   if (!matches || !matches[1]) {
-    let searchString = `${priceDivBeforeAfter[0].slice(-100)}(.*?)<`;
+    let searchString = `${priceDivBeforeAfter[0].slice(-constants.crawler.htmlMinMatchSize)}(.*?)<`;
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, 100)}`;
+    let searchString = `>(.*?)${priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize)}`;
     matches = html.match(searchString);
   }
 

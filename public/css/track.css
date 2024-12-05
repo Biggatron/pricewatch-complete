@@ -8,6 +8,14 @@ iframe {
 /*      Track table         */
 /****************************/
 /* Style for table */
+.table-wrapper {
+  display: flex;
+  flex: auto;
+  flex-direction: column;
+  width: 100%;
+  overflow-x: scroll;
+}
+
 table {
   margin-top: 1rem;
   border-collapse: collapse;
@@ -16,12 +24,14 @@ table {
   border-color: #333;
   align-self: center;
 }
-
-@media (max-width: 800px) {
-  table {
-    width: 95%; /* Expand to 100% for smaller screens */
-  }
+table a {
+  color: rgb(100, 100, 255);
+  text-decoration: none;
 }
+table a:visited {
+  color: rgb(100, 100, 255);
+}
+
 thead {
   border-color: #333;
 }
@@ -60,14 +70,20 @@ tr.higher {
   background-color: rgb(255, 141, 141);
 }
 
-a:visited {
-  color: blue;
+@media (max-width: 700px) {
+  table {
+    width: 95%; /* Expand to 100% for smaller screens */
+  }
+  .hide-on-mobile {
+    display: none;
+  }
 }
-
-a:visited {
-  color: blue;
+@media (max-width: 400px) {
+  table {
+    align-self: baseline;
+    margin: 0.2rem;
+  }
 }
-
 /****************************/
 /*      New Track           */
 /****************************/

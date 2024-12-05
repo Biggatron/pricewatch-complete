@@ -5,5 +5,9 @@ module.exports = {
     },
     email: {
       sendEmail: false
+    },
+    html: {
+      saveNewTrackHTML: false,
+      saveUpdateTrackHTML: false
     }
   }

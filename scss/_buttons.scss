@@ -12,6 +12,10 @@
   cursor: pointer;
   transition: background-color 0.3s ease;
 
+  @media (max-width: 700px) {
+
+  }
+
   &:hover {
     background-color: scale-color($bg-color, $lightness: -10%);
   }
@@ -19,6 +23,10 @@
 
 .btn {
   @include button-style(variables.$color-orange-1);
+
+  @media (max-width: 700px) {
+    @include button-style(variables.$color-orange-1, 1.2rem, white, 0.6rem);
+  }
 }
 
 .btn-google-blue {

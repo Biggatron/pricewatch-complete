@@ -1,5 +1,10 @@
-<nav class="navbar">
-  <ul class="navbar-group">
+<nav class="top-nav">
+  <!-- Collapsible menu for small screens -->
+  <input id="menu-toggle" type="checkbox" />
+  <label class='menu-button-container' for="menu-toggle">
+  <div class='menu-button'></div>
+  </label>
+  <ul class="menu">
     <li>
       <a class="navbar-item <%= navItem === 'new-track' ? 'navbar-highlight' : 'nav-link' %>" href="/">New track</a>
     </li>
@@ -12,17 +17,20 @@
       </li>
     <% } %>
   </ul>
-  
+
+  <!-- Navbar Title -->
   <div class="navbar-title">
     <h1>Pricewatcher</h1>
   </div>
-  
-  <ul class="navbar-group">
+
+  <!-- Profile/Login -->
+  <ul class="profile-menu">
     <li>
       <% if (user) { %>
-      <a class="navbar-item <%= navItem === 'profile' ? 'navbar-highlight' : 'nav-link' %>" href="/profile">
-          <%= user.name %>
-      </a>
+        <a class="navbar-account-button btn-icon" href="/profile"></a>
+        <!-- <a class="navbar-item <%= navItem === 'profile' ? 'navbar-highlight' : 'nav-link' %>" href="/profile">
+          <%= user.name %> 
+      </a> -->
       <% } else { %>
       <a class="navbar-item <%= navItem === 'login' ? 'navbar-highlight' : 'nav-link' %>" href="/auth/login">Login</a>
       <% } %>
@@ -31,6 +39,11 @@
 </nav>
 
 <script>
+  function toggleMenu() {
+    const menu = document.querySelector('.collapsible-menu');
+    menu.classList.toggle('active');
+  }
+
   async function updateTracks() {
     console.log('Updating tracks')
     try {

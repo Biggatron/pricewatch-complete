@@ -11,6 +11,7 @@
 </header>
 
 <main>  
+  <div class="table-wrapper">
     <table id="track-table">
       <thead>
         <tr>
@@ -18,9 +19,8 @@
           <th>Original Price</th>
           <th>Current Price</th>
           <th>Active</th>
-          <th>Start Date</th>
-          <th>Change Date</th>
-          <th>Product Page</th>
+          <th class="hide-on-mobile">Start Date</th>
+          <th class="hide-on-mobile">Change Date</th>
         </tr>
       </thead>
       <tbody>
@@ -28,22 +28,21 @@
           if (!tracks || tracks.length === 0) { 
         %>
           <tr>
-            <td colspan="7">No tracks to display</td>
+            <td colspan="6">No tracks to display</td>
           </tr>
         <% 
           } else { 
             tracks.forEach(track => { 
         %>
           <tr>
-            <td><%= track.product_name %></td>
+            <td><a href="<%= track.price_url %>" target="_blank"><%= track.product_name %></a></td>
             <td><%= track.orig_price %></td>
             <td style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
               <%= track.curr_price %>
             </td>
             <td><%= track.active ? 'Yes' : 'No' %></td>
-            <td><%= new Date(track.created_at).toLocaleDateString() %></td>
-            <td><%= new Date(track.last_modified_at).toLocaleDateString() %></td>
-            <td><a href="<%= track.price_url %>" target="_blank">View Product</a></td>
+            <td class="hide-on-mobile"><%= new Date(track.created_at).toLocaleDateString() %></td>
+            <td class="hide-on-mobile"><%= new Date(track.last_modified_at).toLocaleDateString() %></td>
           </tr>
         <% 
             }); 
@@ -51,6 +50,7 @@
         %>
       </tbody>
     </table>
+  </div>
 </main>
 
 <footer>

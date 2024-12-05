@@ -33,7 +33,13 @@ async function getAndUpdatePrices() {
     } else {
       html = await getHTML(track.price_url);
     } 
-    saveHTMLFile(html, track.price_url);
+
+    // Save HTML if constant is set (for debugging)
+    if (constants.html.saveUpdateTrackHTML) {
+      saveHTMLFile(html, track.price_url);
+    }
+
+    // Find current price in html and compare with previous price
     findPriceFromDiv(html, track)
   }
 }
@@ -75,7 +81,6 @@ async function getHTML(url) {
         throw new Error('Empty HTML content');
       }
 
-      //saveHTMLFile(html, url); // Used for debugging
       return html; // Return the successfully fetched HTML
     } catch (error) {
       attempts++;
@@ -116,8 +121,7 @@ async function getRenderedHTML(url) {
     
       // Close the browser
       await browser.close();
-    
-      // saveHTMLFile(html, url); // Used for debugging
+
       return html;
     } catch (error) {
       attempts++;
@@ -242,6 +246,12 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
   } else {
     html = await getHTML(trackRequest.price_url);
   }
+    
+  // Save HTML if constant is set (for debugging)
+  if (constants.html.saveNewTrackHTML) {
+    saveHTMLFile(html, track.price_url);
+  }
+
   const dom = new JSDOM(html);
   const document = dom.window.document;
   let title = '';
@@ -273,6 +283,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       if (htmlPriceLocation === -1) {
         console.log({ htmlPrice: htmlPrice });
         htmlPrice = htmlPrice.replace(/\s+/g, '&nbsp;');
+        htmlPrice = htmlPrice.replace(/kr./g, '');
         htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
       }
       // If price string is not found in html we process next element. 
@@ -365,6 +376,8 @@ async function addTracksToDatabase(tracks, res) {
     let track = tracks[i];
     console.log(track);
 
+    // Product name can at most be 64 char
+    track.product_name = track.product_name.substring(0, 63);
     
     // Check if track exists, if so then update existing.
     let existingTrack = await trackExists(track);

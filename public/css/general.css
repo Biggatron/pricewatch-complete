@@ -56,7 +56,21 @@
 .btn:hover {
   background-color: rgb(255, 168.2119760479, 53.7);
 }
-
+@media (max-width: 700px) {
+  .btn {
+    background-color: #ffb758;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.6rem;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+  .btn:hover {
+    background-color: rgb(255, 168.2119760479, 53.7);
+  }
+}
 .btn-google-blue {
   background-color: #4285f4;
   color: white;

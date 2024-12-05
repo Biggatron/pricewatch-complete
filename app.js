@@ -68,4 +68,4 @@ server.listen(port, () => {
 })
 
 // Set interval to run update price checks every 24 hours 
-setInterval(() => updatePrices(), constants.crawler.intervalTime);
+setInterval(() => crawler.updatePrices(), constants.crawler.intervalTime);

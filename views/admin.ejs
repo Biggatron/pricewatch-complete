@@ -25,6 +25,10 @@
       </div>
     <% } else { %>
       <div class="admin-panel">
+        <h2 class="admin-section-title">Actions</h2>
+        <button class="btn" onclick="updateTracks()">Update tracks</button>
+      </div>
+      <div class="admin-panel">
         <h2 class="admin-section-title">Recent logs</h2>
         <% if (!logs || logs.length === 0) { %>
           <p>No logs have been written yet.</p>
@@ -39,6 +43,33 @@
 <footer>
   <%- include('./partials/footer'); %>
 </footer>
+
+<script>
+  async function updateTracks() {
+    console.log('Updating tracks');
+    try {
+      const response = await fetch('/track/update-prices', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      if (response.status === 200) {
+        showToast('Track update job started');
+      } else if (response.status === 401) {
+        window.location.href = '/auth/login';
+      } else if (response.status === 403) {
+        showToast('Admin access required');
+      } else {
+        showToast('Something went wrong');
+      }
+    } catch (error) {
+      console.log(error);
+      showToast('Something went wrong');
+    }
+  }
+</script>
 
 </body>
 </html>

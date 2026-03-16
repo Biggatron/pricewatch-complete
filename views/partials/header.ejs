@@ -17,11 +17,6 @@
         <a class="navbar-item <%= navItem === 'admin' ? 'navbar-highlight' : 'nav-link' %>" href="/admin">Admin</a>
       </li>
     <% } %>
-    <% if (user && user.id === 1) { %>
-      <li>
-        <button class="navbar-item button-item" onclick="updateTracks()">Update tracks</button>
-      </li>
-    <% } %>
   </ul>
 
   <!-- Navbar Title -->
@@ -43,34 +38,3 @@
     </li>
   </ul>
 </nav>
-
-<script>
-  function toggleMenu() {
-    const menu = document.querySelector('.collapsible-menu');
-    menu.classList.toggle('active');
-  }
-
-  async function updateTracks() {
-    console.log('Updating tracks')
-    try {
-      let response = await fetch("/track/update-prices",{
-        // method changes
-        method: 'POST',
-        headers: {
-            "Content-type": "application/json; charset=UTF-8"
-        }
-      });
-      //let newTrack = await response.body;
-      if (response.status === 200) {
-        showToast('Track update job started')
-      } else if (response.status === 401) {
-        window.location.href = "login.html";
-      } else {
-        showToast('Something went wrong')
-      }
-    } catch (err) {
-      showToast('something went wrong (check console log)')
-      console.log(err)
-    } 
-  }
-</script>

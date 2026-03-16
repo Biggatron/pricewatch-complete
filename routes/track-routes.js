@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const crawler = require('../utilities/crawler');
 const query = require('../db/db');
+const keys = require('../config/keys');
 
 const authCheck = (req, res, next) => {
     if(!req.user){
@@ -8,6 +9,14 @@ const authCheck = (req, res, next) => {
     } else {
         next();
     }
+};
+
+const adminCheck = (req, res, next) => {
+  const userEmail = ((req.user && req.user.email) || '').toLowerCase();
+  if (!keys.admin.allowedEmails.includes(userEmail)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
 };
 
 // New track landing page
@@ -33,7 +42,7 @@ router.post('/', (req, res) => {
     crawler.findAndSavePrices(trackRequest, false, res);
   });
   
-  router.post('/update-prices', (req, res) => {
+  router.post('/update-prices', authCheck, adminCheck, (req, res) => {
     console.log("Updating prices in background...")
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.status(200).send('Track update job started');

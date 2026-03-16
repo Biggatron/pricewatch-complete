@@ -1,4 +1,5 @@
 <nav class="top-nav">
+  <% const showAdminLink = typeof isAdmin !== 'undefined' ? isAdmin : false; %>
   <!-- Collapsible menu for small screens -->
   <input id="menu-toggle" type="checkbox" />
   <label class='menu-button-container' for="menu-toggle">
@@ -11,7 +12,7 @@
     <li>
       <a class="navbar-item <%= navItem === 'my-tracks' ? 'navbar-highlight' : 'nav-link' %>" href="/tracklist">My tracks</a>
     </li>
-    <% if (isAdmin) { %>
+    <% if (showAdminLink) { %>
       <li>
         <a class="navbar-item <%= navItem === 'admin' ? 'navbar-highlight' : 'nav-link' %>" href="/admin">Admin</a>
       </li>

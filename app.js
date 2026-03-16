@@ -3,6 +3,7 @@ const http = require('http');
 const cookieSession = require('cookie-session')
 const passport = require('passport')
 const authRoutes = require('./routes/auth-routes');
+const adminRoutes = require('./routes/admin-routes');
 const profileRoutes = require('./routes/profile-routes');
 const trackRoutes = require('./routes/track-routes');
 const passportSetup = require('./config/passport')
@@ -10,6 +11,9 @@ const keys = require('./config/keys');
 const errorHandler = require('./utilities/errorHandler');
 const crawler = require('./utilities/crawler');
 const constants = require('./config/const');
+const { initializeLogger } = require('./utilities/logger');
+
+initializeLogger();
 
 const app = express();
 const server = http.createServer(app);
@@ -45,6 +49,16 @@ app.use(cookieSession({
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.use((req, res, next) => {
+  res.locals.user = req.user;
+  res.locals.isAdmin = Boolean(
+    req.user &&
+    req.user.email &&
+    keys.admin.allowedEmails.includes(req.user.email.toLowerCase())
+  );
+  next();
+});
+
 // Handle passport deserializion errors
 app.use(function(err, req, res, next) {
   if (err) {
@@ -57,6 +71,7 @@ app.use(function(err, req, res, next) {
 
 // set up routes
 app.use('/auth', authRoutes);
+app.use('/admin', adminRoutes);
 app.use('/profile', profileRoutes);
 app.use('/track', trackRoutes);
 app.use('/', trackRoutes);

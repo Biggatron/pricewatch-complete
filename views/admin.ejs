@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+  <link rel="stylesheet" href="/css/admin.css" type="text/css">
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', { navItem: 'admin' }); %>
+</header>
+
+<main>
+  <div class="content-container admin-container">
+    <div class="space-between-row vertical-align-content admin-header">
+      <div>
+        <h1 class="admin-title">Admin Console</h1>
+        <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
+      </div>
+    </div>
+
+    <% if (accessDenied) { %>
+      <div class="admin-panel">
+        <p>You do not have access to this page.</p>
+      </div>
+    <% } else { %>
+      <div class="admin-panel">
+        <h2 class="admin-section-title">Recent logs</h2>
+        <% if (!logs || logs.length === 0) { %>
+          <p>No logs have been written yet.</p>
+        <% } else { %>
+          <pre class="log-viewer"><%= logs.join('\n') %></pre>
+        <% } %>
+      </div>
+    <% } %>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>

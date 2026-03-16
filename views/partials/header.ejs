@@ -11,6 +11,11 @@
     <li>
       <a class="navbar-item <%= navItem === 'my-tracks' ? 'navbar-highlight' : 'nav-link' %>" href="/tracklist">My tracks</a>
     </li>
+    <% if (isAdmin) { %>
+      <li>
+        <a class="navbar-item <%= navItem === 'admin' ? 'navbar-highlight' : 'nav-link' %>" href="/admin">Admin</a>
+      </li>
+    <% } %>
     <% if (user && user.id === 1) { %>
       <li>
         <button class="navbar-item button-item" onclick="updateTracks()">Update tracks</button>

@@ -350,6 +350,16 @@ async function findPriceFromDiv(html, track) {
     id: track.id,
     productName: track.product_name
   });
+  const jsonLdPrice = extractPriceFromJsonLd(html);
+  if (isNumeric(jsonLdPrice)) {
+    console.info('[crawler] Found price in JSON-LD product schema', {
+      id: track.id,
+      productName: track.product_name,
+      price: jsonLdPrice
+    });
+    return handleMatchedPrice(jsonLdPrice, track);
+  }
+
   let priceDivBeforeAfter = [];
 
   // Try to find exact match
@@ -414,71 +424,8 @@ async function findPriceFromDiv(html, track) {
   if (match.length > 20) {
     match = ''; 
   }
-  // If tracked price has changed we update database and send email to user
   if (isNumeric(match)) {
-    if (match !== track.curr_price) {
-      await updatePrice(match, track);
-      const priceDirection = Number(match) < Number(track.curr_price)
-        ? 'lower'
-        : Number(match) > Number(track.curr_price)
-          ? 'higher'
-          : 'same';
-      console.info('[crawler] Price changed', {
-        id: track.id,
-        productName: track.product_name,
-        previousPrice: track.curr_price,
-        newPrice: match
-      });
-
-      // Update track object with new price before sending email
-      const previousPrice = track.curr_price;
-      track.curr_price = match;
-      await sendPriceUpdateEmail(track);
-      return {
-        status: priceDirection === 'lower' ? 'updated_lower' : priceDirection === 'higher' ? 'updated_higher' : 'updated_other',
-        stage: 'find-price',
-        previousPrice,
-        currentPrice: match,
-        priceDirection,
-        markedInactive: false,
-        reactivated: false,
-        failureLogId: null,
-        errorMessage: null
-      };
-    } else {
-      console.info('[crawler] Price unchanged', {
-        id: track.id,
-        price: match
-      });
-    }
-    if (!track.active) {
-      await setTrackAsActive(track);
-      console.info('[crawler] Track reactivated', {
-        id: track.id
-      });
-      return {
-        status: 'reactivated',
-        stage: 'find-price',
-        previousPrice: track.curr_price,
-        currentPrice: match,
-        priceDirection: 'same',
-        markedInactive: false,
-        reactivated: true,
-        failureLogId: null,
-        errorMessage: null
-      };
-    }
-    return {
-      status: 'unchanged',
-      stage: 'find-price',
-      previousPrice: track.curr_price,
-      currentPrice: match,
-      priceDirection: 'same',
-      markedInactive: false,
-      reactivated: false,
-      failureLogId: null,
-      errorMessage: null
-    };
+    return handleMatchedPrice(match, track);
   } else {
     let htmlFilePath = null;
     if (shouldSaveHtml('update', true)) {
@@ -513,6 +460,226 @@ async function findPriceFromDiv(html, track) {
     };
   }
 };
+
+async function handleMatchedPrice(match, track) {
+  // If tracked price has changed we update database and send email to user
+  if (match !== track.curr_price) {
+    await updatePrice(match, track);
+    const priceDirection = Number(match) < Number(track.curr_price)
+      ? 'lower'
+      : Number(match) > Number(track.curr_price)
+        ? 'higher'
+        : 'same';
+    console.info('[crawler] Price changed', {
+      id: track.id,
+      productName: track.product_name,
+      previousPrice: track.curr_price,
+      newPrice: match
+    });
+
+    // Update track object with new price before sending email
+    const previousPrice = track.curr_price;
+    track.curr_price = match;
+    await sendPriceUpdateEmail(track);
+    return {
+      status: priceDirection === 'lower' ? 'updated_lower' : priceDirection === 'higher' ? 'updated_higher' : 'updated_other',
+      stage: 'find-price',
+      previousPrice,
+      currentPrice: match,
+      priceDirection,
+      markedInactive: false,
+      reactivated: false,
+      failureLogId: null,
+      errorMessage: null
+    };
+  }
+
+  console.info('[crawler] Price unchanged', {
+    id: track.id,
+    price: match
+  });
+
+  if (!track.active) {
+    await setTrackAsActive(track);
+    console.info('[crawler] Track reactivated', {
+      id: track.id
+    });
+    return {
+      status: 'reactivated',
+      stage: 'find-price',
+      previousPrice: track.curr_price,
+      currentPrice: match,
+      priceDirection: 'same',
+      markedInactive: false,
+      reactivated: true,
+      failureLogId: null,
+      errorMessage: null
+    };
+  }
+
+  return {
+    status: 'unchanged',
+    stage: 'find-price',
+    previousPrice: track.curr_price,
+    currentPrice: match,
+    priceDirection: 'same',
+    markedInactive: false,
+    reactivated: false,
+    failureLogId: null,
+    errorMessage: null
+  };
+}
+
+function extractPriceFromJsonLd(html) {
+  const productData = extractProductDataFromJsonLd(html);
+  return productData ? productData.price : null;
+}
+
+function safeParseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return null;
+  }
+}
+
+function extractProductDataFromJsonLd(html) {
+  const scriptMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+
+  for (const scriptTag of scriptMatches) {
+    const contentMatch = scriptTag.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!contentMatch || !contentMatch[1]) {
+      continue;
+    }
+
+    const scriptContent = contentMatch[1].trim();
+    const parsedJson = safeParseJson(scriptContent);
+    if (parsedJson == null) {
+      continue;
+    }
+
+    const productData = findProductDataInJsonLd(parsedJson);
+    if (productData && isNumeric(productData.price)) {
+      return {
+        ...productData,
+        priceDiv: buildJsonLdPriceDiv(scriptContent, productData.price)
+      };
+    }
+  }
+
+  return null;
+}
+
+function findProductDataInJsonLd(node) {
+  if (!node) {
+    return null;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const productData = findProductDataInJsonLd(item);
+      if (productData) {
+        return productData;
+      }
+    }
+    return null;
+  }
+
+  if (typeof node !== 'object') {
+    return null;
+  }
+
+  if (node['@graph']) {
+    const graphProductData = findProductDataInJsonLd(node['@graph']);
+    if (graphProductData) {
+      return graphProductData;
+    }
+  }
+
+  const typeValue = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
+  const isProduct = typeValue.filter(Boolean).some((type) => String(type).toLowerCase() === 'product');
+
+  if (isProduct) {
+    const offerPrice = extractOfferPrice(node.offers);
+    if (offerPrice) {
+      return {
+        price: offerPrice,
+        name: typeof node.name === 'string' ? node.name : null
+      };
+    }
+  }
+
+  for (const value of Object.values(node)) {
+    const nestedProductData = findProductDataInJsonLd(value);
+    if (nestedProductData) {
+      return nestedProductData;
+    }
+  }
+
+  return null;
+}
+
+function extractOfferPrice(offers) {
+  if (!offers) {
+    return null;
+  }
+
+  if (Array.isArray(offers)) {
+    for (const offer of offers) {
+      const price = extractOfferPrice(offer);
+      if (price) {
+        return price;
+      }
+    }
+    return null;
+  }
+
+  if (typeof offers !== 'object') {
+    return null;
+  }
+
+  const directPrice = extractNumber(String(offers.price || ''));
+  if (isNumeric(directPrice)) {
+    return directPrice;
+  }
+
+  return null;
+}
+
+function buildJsonLdPriceDiv(scriptContent, price) {
+  const pricePattern = new RegExp(`(["']price["']\\s*:\\s*["']?)${escapeRegex(price)}(["']?)`, 'i');
+  const match = scriptContent.match(pricePattern);
+
+  if (!match || typeof match.index !== 'number') {
+    return escapeRegex(`"price":"${price}"`).replace(escapeRegex(price), '(.*?)');
+  }
+
+  const matchedText = match[0];
+  const startPos = Math.max(0, match.index - 500);
+  const endPos = Math.min(scriptContent.length, match.index + matchedText.length + 500);
+  const snippet = scriptContent.substring(startPos, endPos);
+  const matchPlaceholder = `__PRICE_MATCH_${Date.now()}__`;
+  let escapedSnippet = escapeRegex(snippet.replace(matchedText, matchPlaceholder));
+  const escapedMatchedText = escapeRegex(matchedText).replace(escapeRegex(price), '(.*?)');
+  escapedSnippet = escapedSnippet.replace(matchPlaceholder, escapedMatchedText);
+  return escapedSnippet.trim();
+}
+
+function createTrackFromMatch({ trackRequest, fullyRenderHTML, matchedPrice, priceDiv, title }) {
+  return {
+    orig_price: matchedPrice,
+    curr_price: matchedPrice,
+    requires_javascript: fullyRenderHTML,
+    price_url: trackRequest.price_url,
+    price_div: priceDiv,
+    product_name: title,
+    user_id: trackRequest.user_id,
+    email: trackRequest.email,
+    active: true,
+    created_at: new Date(),
+    last_modified_at: new Date()
+  };
+}
 
 
  // Finds an unknown substring in a string given a known substring to the right
@@ -591,9 +758,25 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       url: trackRequest.price_url
     });
   }
+
+  let tracks = [];
+  const jsonLdProduct = extractProductDataFromJsonLd(html);
+  if (jsonLdProduct && jsonLdProduct.price === trackRequest.orig_price) {
+    console.info('[crawler] Found original price in JSON-LD product schema', {
+      url: trackRequest.price_url,
+      price: jsonLdProduct.price
+    });
+    tracks.push(createTrackFromMatch({
+      trackRequest,
+      fullyRenderHTML,
+      matchedPrice: jsonLdProduct.price,
+      priceDiv: jsonLdProduct.priceDiv,
+      title: jsonLdProduct.name || title
+    }));
+  }
+
   // Use the DOM API to extract values from elements
   const elements = Array.from(document.querySelectorAll("*")).map((x) => x.textContent);
-  let tracks = [];
   let htmlStringPos = 0;
 
   console.info('[crawler] Looking for original price on page', {
@@ -603,7 +786,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     fullyRenderHTML
   });
   // Loop through elements to find given price
-  for (let i=0;i<elements.length;i++) {
+  for (let i=0;i<elements.length && tracks.length === 0;i++) {
     let htmlPrice = elements[i] || ''; 
     let htmlPriceClean = extractNumber(htmlPrice);
     
@@ -637,20 +820,13 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       //escapedPriceDiv.replace(htmlPrice, '(.*?)');
       escapedPriceDiv.trim(); // Remove trailing and leading whitespace
 
-      let track = {
-        orig_price: htmlPriceClean,
-        curr_price: htmlPriceClean,
-        requires_javascript: fullyRenderHTML,
-        price_url: trackRequest.price_url,
-        price_div: escapedPriceDiv,
-        product_name: title,
-        user_id: trackRequest.user_id,
-        email: trackRequest.email,
-        active: true,
-        created_at: new Date(),
-        last_modified_at: new Date()
-      }
-      tracks.push(track);
+      tracks.push(createTrackFromMatch({
+        trackRequest,
+        fullyRenderHTML,
+        matchedPrice: htmlPriceClean,
+        priceDiv: escapedPriceDiv,
+        title
+      }));
       break; // For now only the first price match is tracked
     }
   }

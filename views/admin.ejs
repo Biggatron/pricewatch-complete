@@ -3,6 +3,7 @@
 <head>
   <%- include('./partials/head'); %>
   <link rel="stylesheet" href="/css/admin.css" type="text/css">
+  <link rel="stylesheet" href="/css/track.css" type="text/css">
 </head>
 <body class="body-container">
 
@@ -161,6 +162,86 @@
           </table>
         <% } %>
       </div>
+      <div class="admin-panel">
+        <h2 class="admin-section-title">Track manager</h2>
+        <% if (!tracks || tracks.length === 0) { %>
+          <p>No tracks found.</p>
+        <% } else { %>
+          <div class="table-wrapper admin-track-wrapper">
+            <table id="track-table" class="admin-track-table">
+              <thead>
+                <tr>
+                  <th>Product Name</th>
+                  <th>User</th>
+                  <th>Original Price</th>
+                  <th>Current Price</th>
+                  <th>Active</th>
+                  <th class="hide-on-mobile">Change Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% tracks.forEach((track) => { %>
+                  <tr data-track-row="<%= track.id %>">
+                    <td>
+                      <div>
+                        <a href="<%= track.price_url %>" target="_blank"><%= track.product_name %></a>
+                        <span class="admin-track-inline-id">#<%= track.id %></span>
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        class="admin-user-chip"
+                        tabindex="0"
+                        data-tooltip="User: <%= track.user_name || 'Unknown user' %><%= track.email ? ' | ' + track.email : '' %>">
+                        User #<%= track.user_id || '-' %>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="field-display" data-display="orig_price"><%= track.orig_price %></span>
+                      <input
+                        class="admin-input field-edit display-none"
+                        type="text"
+                        inputmode="numeric"
+                        step="1"
+                        value="<%= track.orig_price %>"
+                        data-field="orig_price">
+                    </td>
+                    <td class="admin-price-cell" style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
+                      <span class="field-display" data-display="curr_price"><%= track.curr_price %></span>
+                      <input
+                        class="admin-input field-edit display-none"
+                        type="text"
+                        inputmode="numeric"
+                        step="1"
+                        value="<%= track.curr_price %>"
+                        data-field="curr_price">
+                    </td>
+                    <td>
+                      <span class="field-display" data-display="active"><%= track.active ? 'Yes' : 'No' %></span>
+                      <label class="admin-checkbox-label field-edit display-none">
+                        <input
+                          type="checkbox"
+                          data-field="active"
+                          <%= track.active ? 'checked' : '' %>>
+                        <span><%= track.active ? 'Active' : 'Inactive' %></span>
+                      </label>
+                    </td>
+                    <td class="hide-on-mobile"><%= track.last_modified_at ? new Date(track.last_modified_at).toLocaleDateString() : '-' %></td>
+                    <td class="admin-actions-cell">
+                      <button class="btn btn-small field-display" onclick="editTrack(<%= track.id %>)">Edit</button>
+                      <div class="field-edit display-none admin-action-group">
+                        <button class="btn btn-small" onclick="saveTrack(<%= track.id %>)">Save</button>
+                        <button class="btn btn-small admin-cancel-btn" onclick="cancelEditTrack(<%= track.id %>)">Cancel</button>
+                      </div>
+                    </td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
     <% } %>
   </div>
 </main>
@@ -194,6 +275,121 @@
       showToast('Something went wrong');
     }
   }
+
+  async function saveTrack(trackId) {
+    const row = document.querySelector(`[data-track-row="${trackId}"]`);
+    if (!row) {
+      showToast('Track row not found');
+      return;
+    }
+
+    const origPrice = row.querySelector('[data-field="orig_price"]').value;
+    const currPrice = row.querySelector('[data-field="curr_price"]').value;
+    const active = row.querySelector('[data-field="active"]').checked;
+
+    try {
+      const response = await fetch(`/admin/tracks/${trackId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        },
+        body: JSON.stringify({
+          orig_price: origPrice,
+          curr_price: currPrice,
+          active
+        })
+      });
+
+      if (response.ok) {
+        const label = row.querySelector('.admin-checkbox-label span');
+        if (label) {
+          label.textContent = active ? 'Active' : 'Inactive';
+        }
+        row.querySelector('[data-display="orig_price"]').textContent = origPrice;
+        row.querySelector('[data-display="curr_price"]').textContent = currPrice;
+        row.querySelector('[data-display="active"]').textContent = active ? 'Yes' : 'No';
+        const currPriceCell = row.querySelector('.admin-price-cell');
+        if (currPriceCell) {
+          currPriceCell.style.backgroundColor =
+            Number(currPrice) < Number(origPrice) ? '#9dff9d' :
+            Number(currPrice) > Number(origPrice) ? '#ff8d8d' :
+            'inherit';
+        }
+        toggleTrackEditMode(trackId, false);
+        showToast(`Track ${trackId} updated`);
+      } else {
+        const body = await response.json().catch(() => null);
+        showToast(body && body.error ? body.error : 'Failed to update track');
+      }
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to update track');
+    }
+  }
+
+  function editTrack(trackId) {
+    toggleTrackEditMode(trackId, true);
+  }
+
+  function cancelEditTrack(trackId) {
+    const row = document.querySelector(`[data-track-row="${trackId}"]`);
+    if (!row) {
+      return;
+    }
+
+    row.querySelector('[data-field="orig_price"]').value = row.querySelector('[data-display="orig_price"]').textContent.trim();
+    row.querySelector('[data-field="curr_price"]').value = row.querySelector('[data-display="curr_price"]').textContent.trim();
+
+    const activeDisplay = row.querySelector('[data-display="active"]').textContent.trim();
+    row.querySelector('[data-field="active"]').checked = activeDisplay === 'Yes';
+
+    const label = row.querySelector('.admin-checkbox-label span');
+    if (label) {
+      label.textContent = activeDisplay === 'Yes' ? 'Active' : 'Inactive';
+    }
+
+    toggleTrackEditMode(trackId, false);
+  }
+
+  function toggleTrackEditMode(trackId, isEditing) {
+    const row = document.querySelector(`[data-track-row="${trackId}"]`);
+    if (!row) {
+      return;
+    }
+
+    row.querySelectorAll('.field-display').forEach((el) => {
+      el.classList.toggle('display-none', isEditing);
+    });
+
+    row.querySelectorAll('.field-edit').forEach((el) => {
+      el.classList.toggle('display-none', !isEditing);
+    });
+  }
+
+  document.querySelectorAll('.admin-user-chip').forEach((chip) => {
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isOpen = chip.classList.contains('tooltip-open');
+
+      document.querySelectorAll('.admin-user-chip.tooltip-open').forEach((openChip) => {
+        openChip.classList.remove('tooltip-open');
+      });
+
+      if (!isOpen) {
+        chip.classList.add('tooltip-open');
+      }
+    });
+
+    chip.addEventListener('blur', () => {
+      chip.classList.remove('tooltip-open');
+    });
+  });
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.admin-user-chip.tooltip-open').forEach((chip) => {
+      chip.classList.remove('tooltip-open');
+    });
+  });
 </script>
 
 </body>

@@ -79,6 +79,14 @@
   width: 100%;
 }
 
+.admin-table-scroll {
+  overflow-x: auto;
+}
+
+.admin-track-wrapper table {
+  width: 95%;
+}
+
 .admin-table th,
 .admin-table td {
   border: 1px solid #ccc;
@@ -95,6 +103,95 @@
 .admin-link-button {
   display: inline-block;
   text-decoration: none;
+}
+
+.admin-input {
+  box-sizing: border-box;
+  padding: 0.45rem;
+  width: 100%;
+}
+
+.admin-checkbox-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.admin-track-subtext {
+  color: #666;
+  font-size: 0.85rem;
+  margin-top: 0.12rem;
+  word-break: break-word;
+}
+
+.admin-track-inline-id {
+  color: #666;
+  font-size: 0.85rem;
+  margin-left: 0.35rem;
+  white-space: nowrap;
+}
+
+.admin-user-chip {
+  border-bottom: 1px dotted #888;
+  color: #333;
+  cursor: default;
+  display: inline-block;
+  font-size: 0.9rem;
+  position: relative;
+  white-space: nowrap;
+}
+
+.admin-user-chip::after {
+  background-color: #222;
+  border-radius: 4px;
+  color: #fff;
+  content: attr(data-tooltip);
+  font-size: 0.8rem;
+  left: 0;
+  max-width: 280px;
+  opacity: 0;
+  padding: 0.45rem 0.55rem;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  white-space: normal;
+  width: max-content;
+  z-index: 20;
+}
+
+.admin-user-chip:hover::after,
+.admin-user-chip:focus::after,
+.admin-user-chip.tooltip-open::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.admin-actions-cell {
+  min-width: 140px;
+}
+
+.admin-action-group {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.admin-cancel-btn {
+  background-color: #999;
+}
+
+.admin-cancel-btn:hover {
+  background-color: #7f7f7f;
+}
+
+.btn-small {
+  font-size: 0.9rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.admin-track-table td {
+  line-height: 1.25;
 }
 
 @media (max-width: 700px) {

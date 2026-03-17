@@ -15,7 +15,6 @@
     <div class="space-between-row vertical-align-content admin-header">
       <div>
         <h1 class="admin-title">Admin Console</h1>
-        <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
       </div>
     </div>
 
@@ -30,10 +29,40 @@
       </div>
       <div class="admin-panel">
         <h2 class="admin-section-title">Recent logs</h2>
+        <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
         <% if (!logs || logs.length === 0) { %>
           <p>No logs have been written yet.</p>
         <% } else { %>
           <pre class="log-viewer"><%= logs.join('\n') %></pre>
+        <% } %>
+      </div>
+      <div class="admin-panel">
+        <h2 class="admin-section-title">Failed updates</h2>
+        <% if (!failedUpdates || failedUpdates.length === 0) { %>
+          <p>No failed updates logged.</p>
+        <% } else { %>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Track</th>
+                <th>Stage</th>
+                <th>Error</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% failedUpdates.forEach((failure) => { %>
+                <tr>
+                  <td><%= new Date(failure.created_at).toLocaleString() %></td>
+                  <td><%= failure.track_id || '-' %></td>
+                  <td><%= failure.stage %></td>
+                  <td><%= failure.error_message %></td>
+                  <td><a href="/admin/failed-updates/<%= failure.id %>">View</a></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
         <% } %>
       </div>
     <% } %>

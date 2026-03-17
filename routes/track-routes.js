@@ -72,11 +72,14 @@ router.post('/', (req, res) => {
   }
 
   async function getTracks(user, res) {
-    console.log('Getting tracks for user:' + user.id)
+    console.info('[track] Loading tracks for user', { userId: user.id });
     const result = await query(
       `SELECT * FROM track WHERE user_id = ${user.id} ORDER BY last_modified_at DESC`
     );
-    console.log(result.rows);
+    console.info('[track] Tracks loaded', {
+      userId: user.id,
+      trackCount: result.rows.length
+    });
     res.render('my-tracks', { user: user, tracks: result.rows });
   }
 

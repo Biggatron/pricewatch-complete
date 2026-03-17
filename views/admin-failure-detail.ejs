@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+  <link rel="stylesheet" href="/css/admin.css" type="text/css">
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', { navItem: 'admin' }); %>
+</header>
+
+<main>
+  <div class="content-container admin-container">
+    <div class="space-between-row vertical-align-content admin-header">
+      <div>
+        <h1 class="admin-title">Failed update detail</h1>
+        <p class="admin-subtitle">Failure #<%= failure.id %> from <%= new Date(failure.created_at).toLocaleString() %></p>
+      </div>
+      <div>
+        <a href="/admin" class="btn admin-link-button">Back</a>
+      </div>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Summary</h2>
+      <table class="admin-table">
+        <tbody>
+          <tr><th>Track ID</th><td><%= failure.track_id || '-' %></td></tr>
+          <tr><th>User ID</th><td><%= failure.user_id || '-' %></td></tr>
+          <tr><th>User email</th><td><%= failure.user_email || '-' %></td></tr>
+          <tr><th>Action</th><td><%= failure.action || '-' %></td></tr>
+          <tr><th>Stage</th><td><%= failure.stage || '-' %></td></tr>
+          <tr><th>Product</th><td><%= failure.product_name || '-' %></td></tr>
+          <tr><th>URL</th><td><a href="<%= failure.product_url %>" target="_blank"><%= failure.product_url %></a></td></tr>
+          <tr><th>Requires JS</th><td><%= failure.requires_javascript ? 'Yes' : 'No' %></td></tr>
+          <tr><th>HTML file</th><td><%= failure.html_file_path || 'Not saved' %></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Error</h2>
+      <pre class="log-viewer"><%= failure.error_message || 'No error message' %>
+
+<%= failure.error_stack || '' %></pre>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Structured details</h2>
+      <pre class="log-viewer"><%= JSON.stringify(failure.details || {}, null, 2) %></pre>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Saved HTML</h2>
+      <% if (failure.html_content) { %>
+        <pre class="log-viewer html-viewer"><%= failure.html_content %></pre>
+      <% } else { %>
+        <p>No HTML was saved for this failure.</p>
+      <% } %>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>

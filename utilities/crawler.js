@@ -6,6 +6,7 @@ const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
 const nodemailer = require('nodemailer');
+const { insertCrawlerFailureLog } = require('./crawler-failure-log');
 
 module.exports = {
   updatePrices,
@@ -14,7 +15,14 @@ module.exports = {
 };
 
 function updatePrices() {
-  getAndUpdatePrices();
+  const startedAt = Date.now();
+  console.info('[crawler] Update job started');
+  getAndUpdatePrices().catch((error) => {
+    console.error('[crawler] Update job failed', {
+      durationMs: Date.now() - startedAt,
+      error
+    });
+  });
 }
 
 async function getAndUpdatePrices() {
@@ -22,26 +30,55 @@ async function getAndUpdatePrices() {
   const result = await query(
     `SELECT * FROM track WHERE active = true or (last_modified_at >= NOW() - INTERVAL '7 days')`
   );
+  console.info('[crawler] Loaded tracks for update', {
+    trackCount: result.rows.length
+  });
+
   for (let i = 0; i < result.rows.length; i++) {
-    let track = result.rows[i];
-    console.log({ id: track.id,
-                  productName: track.product_name,
-                  currPrice: track.curr_price,
-                  url: track.price_url});  
-    if (track.requires_javascript) {
-      html = await getRenderedHTML(track.price_url);
-    } else {
-      html = await getHTML(track.price_url);
-    } 
+    const track = result.rows[i];
+    const startedAt = Date.now();
 
-    // Save HTML if constant is set (for debugging)
-    if (constants.html.saveUpdateTrackHTML) {
-      saveHTMLFile(html, track.price_url);
+    try {
+      console.info('[crawler] Processing track', {
+        id: track.id,
+        productName: track.product_name,
+        currPrice: track.curr_price,
+        url: track.price_url
+      });
+
+      if (track.requires_javascript) {
+        html = await getRenderedHTML(track);
+      } else {
+        html = await getHTML(track);
+      }
+
+      if (shouldSaveHtml('update', false)) {
+        saveHTMLFile(html, {
+          action: 'update',
+          trackId: track.id,
+          userId: track.user_id,
+          url: track.price_url
+        });
+      }
+
+      // Find current price in html and compare with previous price
+      await findPriceFromDiv(html, track);
+      console.info('[crawler] Track processed', {
+        id: track.id,
+        durationMs: Date.now() - startedAt
+      });
+    } catch (error) {
+      console.error('[crawler] Track update failed', {
+        id: track.id,
+        productName: track.product_name,
+        url: track.price_url,
+        durationMs: Date.now() - startedAt,
+        error
+      });
     }
-
-    // Find current price in html and compare with previous price
-    findPriceFromDiv(html, track)
   }
+
+  console.info('[crawler] Update job finished');
 }
 
 function getRandomUserAgent() {
@@ -56,8 +93,10 @@ function getRandomUserAgent() {
 }
 
 async function getHTML(url) {
+  const target = typeof url === 'string' ? { price_url: url } : url;
   let attempts = 0;
   let lastError = null;
+  let finalFailureDetails = null;
 
   while (attempts < 3) {
     try {
@@ -68,11 +107,23 @@ async function getHTML(url) {
         }
       };
 
-      const response = await fetch(url, settings);
+      const response = await fetch(target.price_url, settings);
 
       if (!response.ok) {
-        console.log(`HTTP request failed using user agent: ${randomUserAgent}`)
-        throw new Error(`HTTP error! Status: ${response.status}`);
+        const responseHtml = await response.text();
+
+        const error = new Error(`HTTP error! Status: ${response.status}`);
+        error.details = {
+          url: target.price_url,
+          status: response.status,
+          userAgent: randomUserAgent
+        };
+        finalFailureDetails = {
+          responseHtml,
+          status: response.status,
+          userAgent: randomUserAgent
+        };
+        throw error;
       }
 
       const html = await response.text();
@@ -85,14 +136,35 @@ async function getHTML(url) {
     } catch (error) {
       attempts++;
       lastError = error;
-      console.warn(`Attempt ${attempts} failed: ${error.message}`);
+      console.warn('[crawler] HTML fetch attempt failed', {
+        url: target.price_url,
+        attempt: attempts,
+        error
+      });
     }
   }
 
+  let htmlFilePath = null;
+  if (finalFailureDetails && finalFailureDetails.responseHtml && shouldSaveHtml(getActionName(target), true)) {
+    htmlFilePath = saveHTMLFile(finalFailureDetails.responseHtml, {
+      action: getActionName(target),
+      trackId: target.id,
+      userId: target.user_id,
+      url: target.price_url,
+      suffix: 'fetch-failed'
+    });
+  }
+
+  await logCrawlerFailure(target, 'fetch-html', lastError, {
+    htmlFilePath,
+    status: finalFailureDetails ? finalFailureDetails.status : null,
+    userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null
+  });
   throw new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
 }
 
 async function getRenderedHTML(url) {
+  const target = typeof url === 'string' ? { price_url: url } : url;
   // Launch a headless browser
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
@@ -100,49 +172,63 @@ async function getRenderedHTML(url) {
   let attempts = 0;
   let lastError = null;
 
-  while (attempts < 3) {
-    try {
+  try {
+    while (attempts < 3) {
       const randomUserAgent = getRandomUserAgent();
 
-      // Set user agent
-      await page.setUserAgent(randomUserAgent);
+      try {
+        // Set user agent
+        await page.setUserAgent(randomUserAgent);
 
-      // Navigate to the page
-      await page.goto(url, {
-          waitUntil: 'networkidle2', // Wait until all network requests are finished
-      });
-    
-      // Extract the fully rendered HTML
-      const html = await page.content();
+        // Navigate to the page
+        await page.goto(target.price_url, {
+            waitUntil: 'networkidle2', // Wait until all network requests are finished
+        });
+      
+        // Extract the fully rendered HTML
+        const html = await page.content();
 
-      if (!html) {
-        throw new Error('Empty HTML content');
+        if (!html) {
+          throw new Error('Empty HTML content');
+        }
+
+        return html;
+      } catch (error) {
+        attempts++;
+        lastError = error;
+        console.warn('[crawler] Rendered HTML fetch attempt failed', {
+          url: target.price_url,
+          attempt: attempts,
+          error
+        });
       }
-    
-      // Close the browser
-      await browser.close();
-
-      return html;
-    } catch (error) {
-      attempts++;
-      lastError = error;
-      console.warn(`Attempt ${attempts} failed: ${error.message}`);
     }
-  }
 
-  throw new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+    await logCrawlerFailure(target, 'render-html', lastError, {});
+    throw new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+  } finally {
+    await browser.close();
+  }
 }
 
-function saveHTMLFile(html, url) {
-  const fileName = './HTMLs/' + url.slice(0,40).replace(/[^A-Za-z0-9]/g, '') + '.html';
+function saveHTMLFile(html, metadata) {
+  const fileName = buildHtmlFilePath(metadata);
   fs.writeFile(fileName, html, function(err) {
     if (err) throw err;
-    console.log('HTML file saved!');
+    console.info('[crawler] HTML file saved', {
+      fileName,
+      action: metadata.action,
+      trackId: metadata.trackId || null
+    });
   });
+  return fileName;
 }
 
 async function findPriceFromDiv(html, track) {
-  console.log('Updating price for ' + track.product_name)
+  console.info('[crawler] Looking for updated price', {
+    id: track.id,
+    productName: track.product_name
+  });
   let priceDivBeforeAfter = [];
 
   // Try to find exact match
@@ -164,13 +250,31 @@ async function findPriceFromDiv(html, track) {
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    matches = findHTMLSubstringRight(hmtl, priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize));
+    matches = findHTMLSubstringRight(html, priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize));
   }
 
   // If match is not found or match is over 500 characters long
   if (!matches || !matches[1] || matches[1].length >= 500) { 
-    console.log('Match not found - Setting track as inactive');
-    setTrackAsInactive(track);
+    let htmlFilePath = null;
+    if (shouldSaveHtml('update', true)) {
+      htmlFilePath = saveHTMLFile(html, {
+        action: 'update',
+        trackId: track.id,
+        userId: track.user_id,
+        url: track.price_url,
+        suffix: 'match-failed'
+      });
+    }
+
+    console.warn('[crawler] Price match not found, marking track inactive', {
+      id: track.id,
+      url: track.price_url
+    });
+    await logCrawlerFailure(track, 'find-price', new Error('Price match not found'), {
+      htmlFilePath,
+      matchLength: matches && matches[1] ? matches[1].length : null
+    });
+    await setTrackAsInactive(track);
     return;
   } 
 
@@ -179,26 +283,53 @@ async function findPriceFromDiv(html, track) {
   if (match.length > 20) {
     match = ''; 
   }
-  console.log({ 
-    match: matches[1],
-    cleanMatch: match
-  });
-
   // If tracked price has changed we update database and send email to user
   if (isNumeric(match)) {
     if (match !== track.curr_price) {
-      updatePrice(match, track);
+      await updatePrice(match, track);
+      console.info('[crawler] Price changed', {
+        id: track.id,
+        productName: track.product_name,
+        previousPrice: track.curr_price,
+        newPrice: match
+      });
 
       // Update track object with new price before sending email
       track.curr_price = match;
-      sendPriceUpdateEmail(track);  
+      await sendPriceUpdateEmail(track);
+    } else {
+      console.info('[crawler] Price unchanged', {
+        id: track.id,
+        price: match
+      });
     }
     if (!track.active) {
-      setTrackAsActive(track);
+      await setTrackAsActive(track);
+      console.info('[crawler] Track reactivated', {
+        id: track.id
+      });
     }
   } else {
-    console.log('Match found is not a number - Setting track as inactive');
-    setTrackAsInactive(track);
+    let htmlFilePath = null;
+    if (shouldSaveHtml('update', true)) {
+      htmlFilePath = saveHTMLFile(html, {
+        action: 'update',
+        trackId: track.id,
+        userId: track.user_id,
+        url: track.price_url,
+        suffix: 'non-numeric-match'
+      });
+    }
+
+    console.warn('[crawler] Extracted match was not numeric, marking track inactive', {
+      id: track.id,
+      rawMatch: matches[1]
+    });
+    await logCrawlerFailure(track, 'find-price', new Error('Extracted match was not numeric'), {
+      htmlFilePath,
+      rawMatch: matches[1]
+    });
+    await setTrackAsInactive(track);
     return;
   }
 };
@@ -229,7 +360,11 @@ async function setTrackAsInactive(track) {
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [false, new Date(), track.id]
   );
-  sendTrackInactiveEmail(track);
+  console.warn('[crawler] Track marked inactive', {
+    id: track.id,
+    productName: track.product_name
+  });
+  await sendTrackInactiveEmail(track);
 }
 
 async function setTrackAsActive(track) {
@@ -242,14 +377,26 @@ async function setTrackAsActive(track) {
 async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
   let html = '';
   if (fullyRenderHTML) {
-    html = await getRenderedHTML(trackRequest.price_url);
+    html = await getRenderedHTML({
+      ...trackRequest,
+      action: 'create-track',
+      requires_javascript: true
+    });
   } else {
-    html = await getHTML(trackRequest.price_url);
+    html = await getHTML({
+      ...trackRequest,
+      action: 'create-track',
+      requires_javascript: false
+    });
   }
     
-  // Save HTML if constant is set (for debugging)
-  if (constants.html.saveNewTrackHTML) {
-    saveHTMLFile(html, track.price_url);
+  if (shouldSaveHtml('create-track', false)) {
+    saveHTMLFile(html, {
+      action: 'create-track',
+      trackId: null,
+      userId: trackRequest.user_id,
+      url: trackRequest.price_url
+    });
   }
 
   const dom = new JSDOM(html);
@@ -259,17 +406,22 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
   // Get product name from title
   try {
     title = document.getElementsByTagName("title")[0].textContent || '';
-    console.log('Title: '+ title);
   } catch (err) {
-    console.log('No title element found in html');
+    console.warn('[crawler] No title element found in tracked page', {
+      url: trackRequest.price_url
+    });
   }
   // Use the DOM API to extract values from elements
   const elements = Array.from(document.querySelectorAll("*")).map((x) => x.textContent);
   let tracks = [];
   let htmlStringPos = 0;
 
-  console.log('Looking for price: ' + trackRequest.orig_price);
-  console.log('Elements to search: ' + elements.length)
+  console.info('[crawler] Looking for original price on page', {
+    url: trackRequest.price_url,
+    price: trackRequest.orig_price,
+    elementCount: elements.length,
+    fullyRenderHTML
+  });
   // Loop through elements to find given price
   for (let i=0;i<elements.length;i++) {
     let htmlPrice = elements[i] || ''; 
@@ -281,15 +433,16 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       // If price string is not found in html we try to replace spaces with HTML word breaks 
       let htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
       if (htmlPriceLocation === -1) {
-        console.log({ htmlPrice: htmlPrice });
         htmlPrice = htmlPrice.replace(/\s+/g, '&nbsp;');
         htmlPrice = htmlPrice.replace(/kr./g, '');
         htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
       }
       // If price string is not found in html we process next element. 
       if (htmlPriceLocation === -1) {
-        console.log({ htmlPriceWithBreak: htmlPrice });
-        console.log('Price match found but not location')
+        console.warn('[crawler] Matching price text found but location lookup failed', {
+          url: trackRequest.price_url,
+          candidatePrice: htmlPrice
+        });
         continue; 
       };
       
@@ -300,11 +453,6 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       let priceDiv = html.substring(startPos, endPos);
       let escapedPriceDiv = escapeRegex(priceDiv); 
       let escapedHTMLPrice = escapeRegex(htmlPrice); 
-      console.log({
-        escapedPriceDiv: escapedPriceDiv,
-        htmlPrice: htmlPrice,
-        escapedHTMLPrice: escapedHTMLPrice
-      })
       escapedPriceDiv = escapedPriceDiv.replace(escapedHTMLPrice, '(.*?)');
       //escapedPriceDiv.replace(htmlPrice, '(.*?)');
       escapedPriceDiv.trim(); // Remove trailing and leading whitespace
@@ -329,13 +477,32 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
   if (tracks.length === 0) {
     // If price was not found on plain HTML then attempt to find price on fully rendered page
     if (fullyRenderHTML) {
-      addFailedTrackLog(trackRequest, title);
+      let htmlFilePath = null;
+      if (shouldSaveHtml('create-track', true)) {
+        htmlFilePath = saveHTMLFile(html, {
+          action: 'create-track',
+          trackId: null,
+          userId: trackRequest.user_id,
+          url: trackRequest.price_url,
+          suffix: 'price-not-found'
+        });
+      }
+
+      await addFailedTrackLog(trackRequest, title);
+      await logCrawlerFailure(trackRequest, 'find-original-price', new Error('Price not found on page'), {
+        htmlFilePath,
+        fullyRenderHTML
+      });
+      console.warn('[crawler] Could not find price on rendered page', {
+        url: trackRequest.price_url,
+        price: trackRequest.orig_price
+      });
       res.status(200).send('Price not found on page'); 
     } else {
       await findAndSavePrices(trackRequest, true, res);
     }
   } else {
-    addTracksToDatabase(tracks, res);
+    await addTracksToDatabase(tracks, res);
   }
 }
 
@@ -355,9 +522,16 @@ async function addFailedTrackLog(trackRequest) {
       ]
     );
 
-    console.log('Failed track log inserted with ID:', result.rows[0].id);
+    console.warn('[crawler] Failed track logged', {
+      logId: result.rows[0].id,
+      url: trackRequest.price_url,
+      price: trackRequest.orig_price
+    });
   } catch (error) {
-    console.error('Error inserting failed track log:', error);
+    console.error('[crawler] Failed to insert failed-track log', {
+      url: trackRequest.price_url,
+      error
+    });
   }
 }
 
@@ -368,31 +542,28 @@ function getDomainFromURL(url) {
 
 
 async function addTracksToDatabase(tracks, res) {
-  console.log('Adding ' + tracks.length + ' tracks to database')
+  console.info('[crawler] Saving tracks to database', {
+    trackCount: tracks.length
+  });
   let trackInsertCount = 0;
 
   // Loop through tracks and add/update database
   for (let i = 0; i < tracks.length; i++) {
     let track = tracks[i];
-    console.log(track);
-
     // Product name can at most be 64 char
     track.product_name = track.product_name.substring(0, 63);
     
     // Check if track exists, if so then update existing.
     let existingTrack = await trackExists(track);
     if (existingTrack) {
-      console.log('Updating track' + existingTrack.id);
       const updateResult = await query(
         'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2, "price_div" = $3, "product_name" = $4, "active" = $5, "requires_javascript" = $6 WHERE "id" = $7 RETURNING *',
         [track.curr_price, new Date(), track.price_div, track.product_name, track.active, track.requires_javascript, existingTrack.id]
       );
-      console.log({updateResult: updateResult})
       if (updateResult.rows[0] && updateResult.rows[0].id) {
         ++trackInsertCount;
       }
     } else {
-      console.log('Inserting track')
       const insertResult = await query(
         'INSERT INTO track (orig_price, curr_price, requires_javascript, price_url, price_div, product_name, user_id, email, active, created_at, last_modified_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
         [ track.orig_price, track.curr_price, track.requires_javascript, track.price_url, track.price_div, track.product_name, track.user_id, track.email, track.active, track.created_at, track.last_modified_at ]
@@ -412,7 +583,6 @@ async function addTracksToDatabase(tracks, res) {
 }
 
 async function trackExists(track) {
-  console.log(`Getting track with url ${track.price_url } and for user: ${track.user_id}`)
   let existingTrackResult = await query(
     `SELECT * FROM track WHERE user_id = $1 and price_url = $2 ORDER BY created_at DESC`,
     [track.user_id, track.price_url]
@@ -421,7 +591,6 @@ async function trackExists(track) {
 }
 
 async function updatePrice(newPrice, track) {
-  console.log(`UpdatePrice: trackId=${track.id} newPrice=${newPrice}`);
   const compResult = await query(
     'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [newPrice, new Date(), track.id]
@@ -453,9 +622,18 @@ async function sendEmail(email) {
       
       // Email sent successfully
       email.delivered = true;
-      console.log('Email sent: ' + info.response);
+      console.info('[crawler] Email sent', {
+        trackId: email.track_id,
+        recipient: email.email,
+        response: info.response
+      });
     } catch (error) {
-      console.error('Error sending email: ', error);
+      console.error('[crawler] Failed to send email', {
+        trackId: email.track_id,
+        recipient: email.email,
+        subject: email.subject,
+        error
+      });
     }
   }
   await insertEmail(email);
@@ -473,7 +651,7 @@ async function sendPriceUpdateEmail(track) {
     subject: `Price change: ${track.product_name}`,
     body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}. View product here: ${track.price_url}`
   };
-  sendEmail(email);
+  await sendEmail(email);
 }
 
 async function sendTrackInactiveEmail(track) {
@@ -488,7 +666,7 @@ async function sendTrackInactiveEmail(track) {
     subject: `Possible price change: ${track.product_name}`,
     body: `Price of "${track.product_name}" was not found on product page. Original price was ${track.orig_price}. This could indicate a price change some other product change.`
   };
-  sendEmail(email);
+  await sendEmail(email);
 }
 
 async function insertEmail(email) {
@@ -509,9 +687,16 @@ async function insertEmail(email) {
       ]
     );
 
-    console.log('Email record inserted with ID:', result.rows[0].id);
+    console.info('[crawler] Email log inserted', {
+      emailLogId: result.rows[0].id,
+      trackId: email.track_id
+    });
   } catch (error) {
-    console.error('Error inserting email log:', error);
+    console.error('[crawler] Failed to insert email log', {
+      trackId: email.track_id,
+      recipient: email.email,
+      error
+    });
   }
 }
 
@@ -525,4 +710,73 @@ function escapeRegex(string) {
 
 function isNumeric(value) {
   return /^\d+$/.test(value);
+}
+
+function shouldSaveHtml(action, failedOnly) {
+  const isUpdateAction = action === 'update';
+  const enabled = isUpdateAction ? constants.html.saveUpdateTrackHTML : constants.html.saveNewTrackHTML;
+
+  if (!enabled) {
+    return false;
+  }
+
+  if (!constants.html.onlyFailed) {
+    return true;
+  }
+
+  return Boolean(failedOnly);
+}
+
+function getActionName(target) {
+  return target.action || 'update';
+}
+
+function buildHtmlFilePath(metadata) {
+  const safeUrl = (metadata.url || 'unknown')
+    .slice(0, 40)
+    .replace(/[^A-Za-z0-9]/g, '');
+  const parts = [
+    metadata.action || 'html',
+    metadata.trackId || 'no-track',
+    metadata.userId || 'no-user',
+    metadata.suffix || 'snapshot',
+    Date.now(),
+    safeUrl
+  ];
+  return `./HTMLs/${parts.join('_')}.html`;
+}
+
+async function logCrawlerFailure(target, stage, error, extraDetails = {}) {
+  try {
+    const failure = await insertCrawlerFailureLog({
+      track_id: target.id || null,
+      user_id: target.user_id || null,
+      user_email: target.email || null,
+      action: getActionName(target),
+      stage,
+      product_name: target.product_name || null,
+      product_url: target.price_url || null,
+      requires_javascript: target.requires_javascript,
+      html_file_path: extraDetails.htmlFilePath || null,
+      error_message: error && error.message ? error.message : 'Unknown crawler error',
+      error_stack: error && error.stack ? error.stack : null,
+      details: {
+        ...extraDetails,
+        errorDetails: error && error.details ? error.details : null
+      }
+    });
+
+    console.error('[crawler] Failure logged', {
+      failureLogId: failure.id,
+      trackId: target.id || null,
+      stage,
+      url: target.price_url || null
+    });
+  } catch (logError) {
+    console.error('[crawler] Failed to persist crawler failure log', {
+      stage,
+      url: target.price_url || null,
+      error: logError
+    });
+  }
 }

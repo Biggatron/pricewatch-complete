@@ -4,10 +4,11 @@ module.exports = {
       htmlMinMatchSize: 50
     },
     email: {
-      sendEmail: false
+      sendEmail: true
     },
     html: {
-      saveNewTrackHTML: false,
-      saveUpdateTrackHTML: false
+      saveNewTrackHTML: true,
+      saveUpdateTrackHTML: true,
+      onlyFailed: false
     }
   }

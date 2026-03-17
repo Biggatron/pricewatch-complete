@@ -45,6 +45,33 @@
   word-break: break-word;
 }
 
+.html-viewer {
+  max-height: 80vh;
+}
+
+.admin-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.admin-table th,
+.admin-table td {
+  border: 1px solid #ccc;
+  padding: 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-table th {
+  background-color: #333;
+  color: white;
+}
+
+.admin-link-button {
+  display: inline-block;
+  text-decoration: none;
+}
+
 @media (max-width: 700px) {
   .admin-container {
     padding: 1rem 0.25rem;

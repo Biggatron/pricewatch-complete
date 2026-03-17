@@ -45,6 +45,25 @@ CREATE TABLE failed_track_logs (
     "created_at" timestamp
 );
 
+CREATE TABLE crawler_failure_logs (
+    "id" serial primary key,
+    "track_id" integer,
+    "user_id" integer,
+    "user_email" varchar(256),
+    "action" varchar(64),
+    "stage" varchar(64),
+    "product_name" varchar(256),
+    "product_url" varchar(2048),
+    "requires_javascript" boolean,
+    "html_file_path" varchar(1024),
+    "error_message" text,
+    "error_stack" text,
+    "details" text,
+    "created_at" timestamp NOT NULL DEFAULT now()
+);
+
 -- Add foreign keys
 ALTER TABLE "track" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
 ALTER TABLE "email_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
+ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
+ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");

@@ -11,6 +11,7 @@ const originalConsole = {
 
 let isInitialized = false;
 let logFilePath = '';
+let logStream = null;
 
 function initializeLogger() {
   if (isInitialized) {
@@ -20,6 +21,7 @@ function initializeLogger() {
   const logDirectory = path.resolve(process.cwd(), keys.logging.directory);
   fs.mkdirSync(logDirectory, { recursive: true });
   logFilePath = path.join(logDirectory, keys.logging.filename);
+  logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
   console.log = createLoggerMethod('log');
   console.info = createLoggerMethod('info');
@@ -40,17 +42,21 @@ function createLoggerMethod(level) {
       .map((arg) => formatArgument(arg))
       .join(' ')}\n`;
 
-    fs.appendFile(logFilePath, line, (err) => {
-      if (err) {
+    if (!logStream.write(line)) {
+      logStream.once('error', (err) => {
         originalConsole.error('Failed to write log file:', err.message);
-      }
-    });
+      });
+    }
   };
 }
 
 function formatArgument(arg) {
   if (arg instanceof Error) {
-    return arg.stack || arg.message;
+    return JSON.stringify({
+      name: arg.name,
+      message: arg.message,
+      stack: arg.stack
+    });
   }
 
   if (typeof arg === 'string') {
@@ -58,10 +64,26 @@ function formatArgument(arg) {
   }
 
   try {
-    return JSON.stringify(arg);
+    return JSON.stringify(arg, errorReplacer);
   } catch (error) {
     return String(arg);
   }
+}
+
+function errorReplacer(key, value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack
+    };
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return `[Buffer length=${value.length}]`;
+  }
+
+  return value;
 }
 
 function getLogFilePath() {

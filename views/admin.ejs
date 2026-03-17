@@ -229,7 +229,11 @@
                     </td>
                     <td class="hide-on-mobile"><%= track.last_modified_at ? new Date(track.last_modified_at).toLocaleDateString() : '-' %></td>
                     <td class="admin-actions-cell">
-                      <button class="btn btn-small field-display" onclick="editTrack(<%= track.id %>)">Edit</button>
+                      <div class="field-display admin-action-group admin-action-group-wrap">
+                        <button class="btn btn-small" onclick="editTrack(<%= track.id %>)">Edit</button>
+                        <button class="btn btn-small" onclick="updateTrackNow(<%= track.id %>)">Update</button>
+                        <button class="btn btn-small" onclick="viewTrackHtml(<%= track.id %>)">HTML</button>
+                      </div>
                       <div class="field-edit display-none admin-action-group">
                         <button class="btn btn-small" onclick="saveTrack(<%= track.id %>)">Save</button>
                         <button class="btn btn-small admin-cancel-btn" onclick="cancelEditTrack(<%= track.id %>)">Cancel</button>
@@ -245,6 +249,20 @@
     <% } %>
   </div>
 </main>
+
+<div class="admin-modal display-none" id="html-modal">
+  <div class="admin-modal-backdrop" onclick="closeHtmlModal()"></div>
+  <div class="admin-modal-content">
+    <div class="space-between-row vertical-align-content">
+      <div>
+        <h2 class="admin-section-title" id="html-modal-title">Track HTML</h2>
+        <p class="admin-subtitle" id="html-modal-url"></p>
+      </div>
+      <button class="btn btn-small admin-cancel-btn" onclick="closeHtmlModal()">Close</button>
+    </div>
+    <pre class="log-viewer html-viewer" id="html-modal-content">Loading...</pre>
+  </div>
+</div>
 
 <footer>
   <%- include('./partials/footer'); %>
@@ -325,6 +343,79 @@
       console.log(error);
       showToast('Failed to update track');
     }
+  }
+
+  async function updateTrackNow(trackId) {
+    try {
+      const response = await fetch(`/admin/tracks/${trackId}/update-now`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        showToast(body && body.error ? body.error : 'Failed to update track');
+        return;
+      }
+
+      const result = body.result || {};
+      const row = document.querySelector(`[data-track-row="${trackId}"]`);
+      if (row && result.currentPrice != null) {
+        row.querySelector('[data-display="curr_price"]').textContent = result.currentPrice;
+        const origPrice = row.querySelector('[data-display="orig_price"]').textContent.trim();
+        const currPriceCell = row.querySelector('.admin-price-cell');
+        if (currPriceCell) {
+          currPriceCell.style.backgroundColor =
+            Number(result.currentPrice) < Number(origPrice) ? '#9dff9d' :
+            Number(result.currentPrice) > Number(origPrice) ? '#ff8d8d' :
+            'inherit';
+        }
+      }
+
+      if (row && typeof result.markedInactive === 'boolean') {
+        row.querySelector('[data-display="active"]').textContent = result.markedInactive ? 'No' : 'Yes';
+      }
+
+      showToast(`Track ${trackId} updated: ${result.status || 'done'}`);
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to update track');
+    }
+  }
+
+  async function viewTrackHtml(trackId) {
+    const modal = document.getElementById('html-modal');
+    const title = document.getElementById('html-modal-title');
+    const url = document.getElementById('html-modal-url');
+    const content = document.getElementById('html-modal-content');
+
+    modal.classList.remove('display-none');
+    title.textContent = `Track HTML #${trackId}`;
+    url.textContent = '';
+    content.textContent = 'Loading...';
+
+    try {
+      const response = await fetch(`/admin/tracks/${trackId}/html`);
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        content.textContent = body && body.error ? body.error : 'Failed to load HTML';
+        return;
+      }
+
+      title.textContent = body.productName || `Track HTML #${trackId}`;
+      url.textContent = body.url || '';
+      content.textContent = body.html || '';
+    } catch (error) {
+      console.log(error);
+      content.textContent = 'Failed to load HTML';
+    }
+  }
+
+  function closeHtmlModal() {
+    document.getElementById('html-modal').classList.add('display-none');
   }
 
   function editTrack(trackId) {

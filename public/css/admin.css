@@ -169,12 +169,16 @@
 }
 
 .admin-actions-cell {
-  min-width: 140px;
+  min-width: 210px;
 }
 
 .admin-action-group {
   display: flex;
   gap: 0.4rem;
+}
+
+.admin-action-group-wrap {
+  flex-wrap: nowrap;
 }
 
 .admin-cancel-btn {
@@ -194,7 +198,31 @@
   line-height: 1.25;
 }
 
+.admin-modal {
+  inset: 0;
+  position: fixed;
+  z-index: 100;
+}
+
+.admin-modal-backdrop {
+  background-color: rgba(0, 0, 0, 0.55);
+  inset: 0;
+  position: absolute;
+}
+
+.admin-modal-content {
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  inset: 4vh 4vw;
+  padding: 1rem;
+  position: absolute;
+}
+
 @media (max-width: 700px) {
+  .admin-action-group-wrap {
+    flex-wrap: wrap;
+  }
+
   .admin-container {
     padding: 1rem 0.25rem;
   }

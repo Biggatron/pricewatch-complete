@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const keys = require('../config/keys');
 const query = require('../db/db');
+const crawler = require('../utilities/crawler');
 const { readRecentLogs, getLogFilePath } = require('../utilities/logger');
 const {
   getRecentCrawlerFailureLogs,
@@ -105,6 +106,47 @@ router.post('/tracks/:id', authCheck, adminCheck, async (req, res, next) => {
   }
 });
 
+router.post('/tracks/:id/update-now', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const track = await getTrackById(req.params.id);
+    if (!track) {
+      return res.status(404).json({ error: 'Track not found' });
+    }
+
+    const result = await crawler.updateSingleTrack(track, {
+      triggerType: 'manual-single',
+      triggeredBy: req.user
+    });
+
+    res.status(200).json({
+      message: 'Track update completed',
+      runId: result.runId,
+      result: result.itemResult
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/tracks/:id/html', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const track = await getTrackById(req.params.id);
+    if (!track) {
+      return res.status(404).json({ error: 'Track not found' });
+    }
+
+    const html = await crawler.getTrackHtmlPreview(track);
+    res.status(200).json({
+      trackId: track.id,
+      productName: track.product_name,
+      url: track.price_url,
+      html
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/failed-updates/:id', authCheck, adminCheck, async (req, res, next) => {
   try {
     const failure = await getCrawlerFailureLogById(req.params.id);
@@ -163,4 +205,18 @@ async function getAllTracksForAdmin() {
   );
 
   return result.rows;
+}
+
+async function getTrackById(trackId) {
+  const result = await query(
+    `SELECT
+       track.*,
+       user_account.name AS user_name
+     FROM track
+     LEFT JOIN user_account ON user_account.id = track.user_id
+     WHERE track.id = $1`,
+    [trackId]
+  );
+
+  return result.rows[0] || null;
 }

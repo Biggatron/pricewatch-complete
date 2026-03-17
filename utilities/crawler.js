@@ -19,7 +19,9 @@ const {
 module.exports = {
   updatePrices,
   extractNumber,
-  findAndSavePrices
+  findAndSavePrices,
+  updateSingleTrack,
+  getTrackHtmlPreview
 };
 
 function updatePrices(options = {}) {
@@ -56,74 +58,7 @@ async function getAndUpdatePrices(options = {}) {
 
     for (let i = 0; i < result.rows.length; i++) {
       const track = result.rows[i];
-      const startedAt = Date.now();
-      let itemResult = createRunItemResult(track);
-
-      try {
-        console.info('[crawler] Processing track', {
-          runId: run.id,
-          id: track.id,
-          productName: track.product_name,
-          currPrice: track.curr_price,
-          url: track.price_url
-        });
-
-        const trackContext = {
-          ...track,
-          action: 'update',
-          run_id: run.id
-        };
-
-        let html = '';
-        if (track.requires_javascript) {
-          html = await getRenderedHTML(trackContext);
-        } else {
-          html = await getHTML(trackContext);
-        }
-
-        itemResult.htmlLookupSuccess = true;
-        itemResult.stage = track.requires_javascript ? 'render-html' : 'fetch-html';
-
-        if (shouldSaveHtml('update', false)) {
-          saveHTMLFile(html, {
-            action: 'update',
-            trackId: track.id,
-            userId: track.user_id,
-            url: track.price_url
-          });
-        }
-
-        itemResult = {
-          ...itemResult,
-          ...(await findPriceFromDiv(html, trackContext))
-        };
-
-        console.info('[crawler] Track processed', {
-          runId: run.id,
-          id: track.id,
-          status: itemResult.status,
-          durationMs: Date.now() - startedAt
-        });
-      } catch (error) {
-        itemResult = {
-          ...itemResult,
-          status: 'fetch_failed',
-          stage: error && error.details && error.details.stage ? error.details.stage : (track.requires_javascript ? 'render-html' : 'fetch-html'),
-          errorMessage: error.message,
-          failureLogId: error && error.details ? error.details.failureLogId || null : null
-        };
-
-        console.error('[crawler] Track update failed', {
-          runId: run.id,
-          id: track.id,
-          productName: track.product_name,
-          url: track.price_url,
-          durationMs: Date.now() - startedAt,
-          error
-        });
-      }
-
-      itemResult.durationMs = Date.now() - startedAt;
+      const itemResult = await processTrackUpdate(track, run.id);
 
       const insertedItem = await insertCrawlerRunItem({
         run_id: run.id,
@@ -178,6 +113,72 @@ async function getAndUpdatePrices(options = {}) {
       durationMs: summary.duration_ms
     });
   }
+}
+
+async function updateSingleTrack(track, options = {}) {
+  const runStartedAt = new Date();
+  const run = await createCrawlerRun({
+    trigger_type: options.triggerType || 'manual-single',
+    triggered_by_user_id: options.triggeredBy && options.triggeredBy.id,
+    triggered_by_email: options.triggeredBy && options.triggeredBy.email,
+    status: 'running',
+    started_at: runStartedAt
+  });
+
+  const summary = createRunSummary(runStartedAt);
+  const itemResult = await processTrackUpdate(track, run.id);
+
+  const insertedItem = await insertCrawlerRunItem({
+    run_id: run.id,
+    track_id: track.id,
+    user_id: track.user_id,
+    product_name: track.product_name,
+    product_url: track.price_url,
+    requires_javascript: track.requires_javascript,
+    status: itemResult.status,
+    stage: itemResult.stage,
+    html_lookup_success: itemResult.htmlLookupSuccess,
+    previous_price: itemResult.previousPrice,
+    current_price: itemResult.currentPrice,
+    price_direction: itemResult.priceDirection,
+    marked_inactive: itemResult.markedInactive,
+    reactivated: itemResult.reactivated,
+    failure_log_id: itemResult.failureLogId,
+    error_message: itemResult.errorMessage,
+    duration_ms: itemResult.durationMs
+  });
+
+  if (itemResult.failureLogId) {
+    await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+      run_id: run.id,
+      run_item_id: insertedItem.id
+    });
+  }
+
+  applyRunItemToSummary(summary, itemResult);
+  summary.status = summary.error_count > 0 ? 'partial' : 'success';
+  summary.finished_at = new Date();
+  summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
+
+  await finalizeCrawlerRun(run.id, summary);
+
+  return {
+    runId: run.id,
+    itemResult
+  };
+}
+
+async function getTrackHtmlPreview(track) {
+  const trackContext = {
+    ...track,
+    action: 'preview-html'
+  };
+
+  if (track.requires_javascript) {
+    return getRenderedHTML(trackContext);
+  }
+
+  return getHTML(trackContext);
 }
 
 function getRandomUserAgent() {
@@ -962,6 +963,78 @@ async function logCrawlerFailure(target, stage, error, extraDetails = {}) {
     });
     return null;
   }
+}
+
+async function processTrackUpdate(track, runId) {
+  const startedAt = Date.now();
+  let itemResult = createRunItemResult(track);
+
+  try {
+    console.info('[crawler] Processing track', {
+      runId,
+      id: track.id,
+      productName: track.product_name,
+      currPrice: track.curr_price,
+      url: track.price_url
+    });
+
+    const trackContext = {
+      ...track,
+      action: 'update',
+      run_id: runId
+    };
+
+    let html = '';
+    if (track.requires_javascript) {
+      html = await getRenderedHTML(trackContext);
+    } else {
+      html = await getHTML(trackContext);
+    }
+
+    itemResult.htmlLookupSuccess = true;
+    itemResult.stage = track.requires_javascript ? 'render-html' : 'fetch-html';
+
+    if (shouldSaveHtml('update', false)) {
+      saveHTMLFile(html, {
+        action: 'update',
+        trackId: track.id,
+        userId: track.user_id,
+        url: track.price_url
+      });
+    }
+
+    itemResult = {
+      ...itemResult,
+      ...(await findPriceFromDiv(html, trackContext))
+    };
+
+    console.info('[crawler] Track processed', {
+      runId,
+      id: track.id,
+      status: itemResult.status,
+      durationMs: Date.now() - startedAt
+    });
+  } catch (error) {
+    itemResult = {
+      ...itemResult,
+      status: 'fetch_failed',
+      stage: error && error.details && error.details.stage ? error.details.stage : (track.requires_javascript ? 'render-html' : 'fetch-html'),
+      errorMessage: error.message,
+      failureLogId: error && error.details ? error.details.failureLogId || null : null
+    };
+
+    console.error('[crawler] Track update failed', {
+      runId,
+      id: track.id,
+      productName: track.product_name,
+      url: track.price_url,
+      durationMs: Date.now() - startedAt,
+      error
+    });
+  }
+
+  itemResult.durationMs = Date.now() - startedAt;
+  return itemResult;
 }
 
 function createRunSummary(startedAt) {

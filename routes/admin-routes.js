@@ -5,6 +5,11 @@ const {
   getRecentCrawlerFailureLogs,
   getCrawlerFailureLogById
 } = require('../utilities/crawler-failure-log');
+const {
+  getRecentCrawlerRuns,
+  getCrawlerRunById,
+  getCrawlerRunItems
+} = require('../utilities/crawler-run-log');
 
 const authCheck = (req, res, next) => {
   if (!req.user) {
@@ -29,15 +34,18 @@ const adminCheck = (req, res, next) => {
 
 router.get('/', authCheck, adminCheck, async (req, res, next) => {
   try {
-    const [logs, failedUpdates] = await Promise.all([
+    const [logs, failedUpdates, recentRuns] = await Promise.all([
       readRecentLogs(),
-      getRecentCrawlerFailureLogs()
+      getRecentCrawlerFailureLogs(),
+      getRecentCrawlerRuns()
     ]);
 
     res.render('admin', {
       user: req.user,
       logs,
       failedUpdates,
+      recentRuns,
+      latestRun: recentRuns[0] || null,
       logFilePath: getLogFilePath(),
       accessDenied: false
     });
@@ -56,6 +64,27 @@ router.get('/failed-updates/:id', authCheck, adminCheck, async (req, res, next) 
     res.render('admin-failure-detail', {
       user: req.user,
       failure
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/runs/:id', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const [run, items] = await Promise.all([
+      getCrawlerRunById(req.params.id),
+      getCrawlerRunItems(req.params.id)
+    ]);
+
+    if (!run) {
+      return res.status(404).send('Crawler run not found');
+    }
+
+    res.render('admin-run-detail', {
+      user: req.user,
+      run,
+      items
     });
   } catch (error) {
     next(error);

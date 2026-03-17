@@ -46,7 +46,10 @@ router.post('/', (req, res) => {
     console.log("Updating prices in background...")
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.status(200).send('Track update job started');
-    crawler.updatePrices();
+    crawler.updatePrices({
+      triggerType: 'manual',
+      triggeredBy: req.user
+    });
   });
   
   router.delete('/*', (req, res) => {

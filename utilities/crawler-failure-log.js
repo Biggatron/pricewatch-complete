@@ -7,9 +7,21 @@ let tableReadyPromise = null;
 
 async function ensureCrawlerFailureLogTable() {
   if (!tableReadyPromise) {
-    tableReadyPromise = query(`
+    tableReadyPromise = ensureTable().catch((error) => {
+      tableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await tableReadyPromise;
+}
+
+async function ensureTable() {
+  await query(`
       CREATE TABLE IF NOT EXISTS crawler_failure_logs (
         "id" serial PRIMARY KEY,
+        "run_id" integer,
+        "run_item_id" integer,
         "track_id" integer,
         "user_id" integer,
         "user_email" varchar(256),
@@ -24,13 +36,26 @@ async function ensureCrawlerFailureLogTable() {
         "details" text,
         "created_at" timestamp NOT NULL DEFAULT now()
       )
-    `).catch((error) => {
-      tableReadyPromise = null;
-      throw error;
-    });
-  }
+    `);
 
-  await tableReadyPromise;
+  await query(`
+    ALTER TABLE crawler_failure_logs
+      ADD COLUMN IF NOT EXISTS run_id integer,
+      ADD COLUMN IF NOT EXISTS run_item_id integer,
+      ADD COLUMN IF NOT EXISTS track_id integer,
+      ADD COLUMN IF NOT EXISTS user_id integer,
+      ADD COLUMN IF NOT EXISTS user_email varchar(256),
+      ADD COLUMN IF NOT EXISTS action varchar(64),
+      ADD COLUMN IF NOT EXISTS stage varchar(64),
+      ADD COLUMN IF NOT EXISTS product_name varchar(256),
+      ADD COLUMN IF NOT EXISTS product_url varchar(2048),
+      ADD COLUMN IF NOT EXISTS requires_javascript boolean,
+      ADD COLUMN IF NOT EXISTS html_file_path varchar(1024),
+      ADD COLUMN IF NOT EXISTS error_message text,
+      ADD COLUMN IF NOT EXISTS error_stack text,
+      ADD COLUMN IF NOT EXISTS details text,
+      ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now()
+  `);
 }
 
 async function insertCrawlerFailureLog(entry) {
@@ -38,6 +63,8 @@ async function insertCrawlerFailureLog(entry) {
 
   const result = await query(
     `INSERT INTO crawler_failure_logs (
+      run_id,
+      run_item_id,
       track_id,
       user_id,
       user_email,
@@ -51,9 +78,11 @@ async function insertCrawlerFailureLog(entry) {
       error_stack,
       details,
       created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     RETURNING *`,
     [
+      entry.run_id || null,
+      entry.run_item_id || null,
       entry.track_id || null,
       entry.user_id || null,
       entry.user_email || null,
@@ -116,6 +145,24 @@ async function getCrawlerFailureLogById(id) {
   };
 }
 
+async function updateCrawlerFailureLogLinks(id, links) {
+  await ensureCrawlerFailureLogTable();
+  const result = await query(
+    `UPDATE crawler_failure_logs
+     SET run_id = COALESCE($1, run_id),
+         run_item_id = COALESCE($2, run_item_id)
+     WHERE id = $3
+     RETURNING *`,
+    [
+      links.run_id || null,
+      links.run_item_id || null,
+      id
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
 function parseDetails(details) {
   if (!details) {
     return null;
@@ -132,5 +179,6 @@ module.exports = {
   ensureCrawlerFailureLogTable,
   insertCrawlerFailureLog,
   getRecentCrawlerFailureLogs,
-  getCrawlerFailureLogById
+  getCrawlerFailureLogById,
+  updateCrawlerFailureLogLinks
 };

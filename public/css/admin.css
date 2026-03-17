@@ -30,6 +30,31 @@
   margin-top: 0;
 }
 
+.admin-stats-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.admin-stat-card {
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.85rem;
+}
+
+.admin-stat-label {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.admin-stat-value {
+  font-size: 1.25rem;
+  font-weight: bold;
+  margin-top: 0.3rem;
+}
+
 .log-viewer {
   background-color: #222;
   border-radius: 6px;

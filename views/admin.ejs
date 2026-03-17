@@ -28,6 +28,102 @@
         <button class="btn" onclick="updateTracks()">Update tracks</button>
       </div>
       <div class="admin-panel">
+        <h2 class="admin-section-title">Latest run summary</h2>
+        <% if (!latestRun) { %>
+          <p>No mass updates have been recorded yet.</p>
+        <% } else { %>
+          <div class="admin-stats-grid">
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Status</div>
+              <div class="admin-stat-value"><%= latestRun.status %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Tracks</div>
+              <div class="admin-stat-value"><%= latestRun.track_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">HTML ok</div>
+              <div class="admin-stat-value"><%= latestRun.html_success_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">HTML failed</div>
+              <div class="admin-stat-value"><%= latestRun.html_failure_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Unchanged</div>
+              <div class="admin-stat-value"><%= latestRun.unchanged_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Updated</div>
+              <div class="admin-stat-value"><%= latestRun.updated_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Lowered</div>
+              <div class="admin-stat-value"><%= latestRun.lowered_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Increased</div>
+              <div class="admin-stat-value"><%= latestRun.increased_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Inactive</div>
+              <div class="admin-stat-value"><%= latestRun.inactive_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Reactivated</div>
+              <div class="admin-stat-value"><%= latestRun.reactivated_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Errors</div>
+              <div class="admin-stat-value"><%= latestRun.error_count %></div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="admin-stat-label">Duration</div>
+              <div class="admin-stat-value"><%= latestRun.duration_ms %> ms</div>
+            </div>
+          </div>
+          <p class="admin-subtitle">
+            Started <%= new Date(latestRun.started_at).toLocaleString() %>.
+            Biggest drop: <%= latestRun.biggest_drop_amount == null ? '-' : latestRun.biggest_drop_amount %>.
+            Biggest increase: <%= latestRun.biggest_increase_amount == null ? '-' : latestRun.biggest_increase_amount %>.
+          </p>
+          <p><a href="/admin/runs/<%= latestRun.id %>">View latest run details</a></p>
+        <% } %>
+      </div>
+      <div class="admin-panel">
+        <h2 class="admin-section-title">Recent mass updates</h2>
+        <% if (!recentRuns || recentRuns.length === 0) { %>
+          <p>No mass updates logged.</p>
+        <% } else { %>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Trigger</th>
+                <th>Status</th>
+                <th>Tracks</th>
+                <th>Updated</th>
+                <th>Errors</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% recentRuns.forEach((run) => { %>
+                <tr>
+                  <td><%= new Date(run.started_at).toLocaleString() %></td>
+                  <td><%= run.trigger_type %></td>
+                  <td><%= run.status %></td>
+                  <td><%= run.track_count %></td>
+                  <td><%= run.updated_count %></td>
+                  <td><%= run.error_count %></td>
+                  <td><a href="/admin/runs/<%= run.id %>">View</a></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+      <div class="admin-panel">
         <h2 class="admin-section-title">Recent logs</h2>
         <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
         <% if (!logs || logs.length === 0) { %>

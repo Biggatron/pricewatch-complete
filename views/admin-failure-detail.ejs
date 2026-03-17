@@ -27,6 +27,17 @@
       <table class="admin-table">
         <tbody>
           <tr><th>Track ID</th><td><%= failure.track_id || '-' %></td></tr>
+          <tr>
+            <th>Run</th>
+            <td>
+              <% if (failure.run_id) { %>
+                <a href="/admin/runs/<%= failure.run_id %>">Run #<%= failure.run_id %></a>
+              <% } else { %>
+                -
+              <% } %>
+            </td>
+          </tr>
+          <tr><th>Run item</th><td><%= failure.run_item_id || '-' %></td></tr>
           <tr><th>User ID</th><td><%= failure.user_id || '-' %></td></tr>
           <tr><th>User email</th><td><%= failure.user_email || '-' %></td></tr>
           <tr><th>Action</th><td><%= failure.action || '-' %></td></tr>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('./partials/head'); %>
+  <link rel="stylesheet" href="/css/admin.css" type="text/css">
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('./partials/header', { navItem: 'admin' }); %>
+</header>
+
+<main>
+  <div class="content-container admin-container">
+    <div class="space-between-row vertical-align-content admin-header">
+      <div>
+        <h1 class="admin-title">Mass update run #<%= run.id %></h1>
+        <p class="admin-subtitle">
+          <%= run.trigger_type %> run started <%= new Date(run.started_at).toLocaleString() %>
+        </p>
+      </div>
+      <div>
+        <a href="/admin" class="btn admin-link-button">Back</a>
+      </div>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Summary</h2>
+      <div class="admin-stats-grid">
+        <div class="admin-stat-card"><div class="admin-stat-label">Status</div><div class="admin-stat-value"><%= run.status %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Tracks</div><div class="admin-stat-value"><%= run.track_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">HTML ok</div><div class="admin-stat-value"><%= run.html_success_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">HTML failed</div><div class="admin-stat-value"><%= run.html_failure_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Unchanged</div><div class="admin-stat-value"><%= run.unchanged_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Updated</div><div class="admin-stat-value"><%= run.updated_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Lowered</div><div class="admin-stat-value"><%= run.lowered_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Increased</div><div class="admin-stat-value"><%= run.increased_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Inactive</div><div class="admin-stat-value"><%= run.inactive_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Reactivated</div><div class="admin-stat-value"><%= run.reactivated_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Errors</div><div class="admin-stat-value"><%= run.error_count %></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Duration</div><div class="admin-stat-value"><%= run.duration_ms %> ms</div></div>
+      </div>
+      <p class="admin-subtitle">
+        Triggered by: <%= run.triggered_by_email || 'scheduler' %>.
+        Biggest drop: <%= run.biggest_drop_amount == null ? '-' : run.biggest_drop_amount %>.
+        Biggest increase: <%= run.biggest_increase_amount == null ? '-' : run.biggest_increase_amount %>.
+      </p>
+    </div>
+
+    <div class="admin-panel">
+      <h2 class="admin-section-title">Per-track outcomes</h2>
+      <% if (!items || items.length === 0) { %>
+        <p>No run items were logged.</p>
+      <% } else { %>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Track</th>
+              <th>Status</th>
+              <th>Stage</th>
+              <th>HTML ok</th>
+              <th>Previous</th>
+              <th>Current</th>
+              <th>Direction</th>
+              <th>Duration</th>
+              <th>Error</th>
+              <th>Failure</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% items.forEach((item) => { %>
+              <tr>
+                <td>
+                  <div><strong><%= item.track_id || '-' %></strong></div>
+                  <div><%= item.product_name || '-' %></div>
+                </td>
+                <td><%= item.status || '-' %></td>
+                <td><%= item.stage || '-' %></td>
+                <td><%= item.html_lookup_success ? 'Yes' : 'No' %></td>
+                <td><%= item.previous_price == null ? '-' : item.previous_price %></td>
+                <td><%= item.current_price == null ? '-' : item.current_price %></td>
+                <td><%= item.price_direction || '-' %></td>
+                <td><%= item.duration_ms || 0 %> ms</td>
+                <td><%= item.error_message || '-' %></td>
+                <td>
+                  <% if (item.failure_log_id) { %>
+                    <a href="/admin/failed-updates/<%= item.failure_log_id %>">View failure</a>
+                  <% } else { %>
+                    -
+                  <% } %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      <% } %>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <%- include('./partials/footer'); %>
+</footer>
+
+</body>
+</html>

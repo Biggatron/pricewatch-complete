@@ -47,6 +47,8 @@ CREATE TABLE failed_track_logs (
 
 CREATE TABLE crawler_failure_logs (
     "id" serial primary key,
+    "run_id" integer,
+    "run_item_id" integer,
     "track_id" integer,
     "user_id" integer,
     "user_email" varchar(256),
@@ -62,8 +64,59 @@ CREATE TABLE crawler_failure_logs (
     "created_at" timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE crawler_runs (
+    "id" serial primary key,
+    "trigger_type" varchar(64),
+    "triggered_by_user_id" integer,
+    "triggered_by_email" varchar(256),
+    "status" varchar(32),
+    "started_at" timestamp NOT NULL DEFAULT now(),
+    "finished_at" timestamp,
+    "duration_ms" integer,
+    "track_count" integer DEFAULT 0,
+    "html_success_count" integer DEFAULT 0,
+    "html_failure_count" integer DEFAULT 0,
+    "unchanged_count" integer DEFAULT 0,
+    "updated_count" integer DEFAULT 0,
+    "lowered_count" integer DEFAULT 0,
+    "increased_count" integer DEFAULT 0,
+    "inactive_count" integer DEFAULT 0,
+    "reactivated_count" integer DEFAULT 0,
+    "error_count" integer DEFAULT 0,
+    "biggest_drop_amount" decimal,
+    "biggest_increase_amount" decimal
+);
+
+CREATE TABLE crawler_run_items (
+    "id" serial primary key,
+    "run_id" integer,
+    "track_id" integer,
+    "user_id" integer,
+    "product_name" varchar(256),
+    "product_url" varchar(2048),
+    "requires_javascript" boolean,
+    "status" varchar(64),
+    "stage" varchar(64),
+    "html_lookup_success" boolean,
+    "previous_price" decimal,
+    "current_price" decimal,
+    "price_direction" varchar(32),
+    "marked_inactive" boolean DEFAULT FALSE,
+    "reactivated" boolean DEFAULT FALSE,
+    "failure_log_id" integer,
+    "error_message" text,
+    "duration_ms" integer,
+    "created_at" timestamp NOT NULL DEFAULT now()
+);
+
 -- Add foreign keys
 ALTER TABLE "track" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
 ALTER TABLE "email_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
 ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
 ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
+ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("run_id") REFERENCES "crawler_runs" ("id");
+ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("run_item_id") REFERENCES "crawler_run_items" ("id");
+ALTER TABLE "crawler_run_items" ADD FOREIGN KEY ("run_id") REFERENCES "crawler_runs" ("id");
+ALTER TABLE "crawler_run_items" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
+ALTER TABLE "crawler_run_items" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
+ALTER TABLE "crawler_run_items" ADD FOREIGN KEY ("failure_log_id") REFERENCES "crawler_failure_logs" ("id");

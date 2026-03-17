@@ -6,7 +6,15 @@ const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
 const nodemailer = require('nodemailer');
-const { insertCrawlerFailureLog } = require('./crawler-failure-log');
+const {
+  insertCrawlerFailureLog,
+  updateCrawlerFailureLogLinks
+} = require('./crawler-failure-log');
+const {
+  createCrawlerRun,
+  finalizeCrawlerRun,
+  insertCrawlerRunItem
+} = require('./crawler-run-log');
 
 module.exports = {
   updatePrices,
@@ -14,10 +22,10 @@ module.exports = {
   findAndSavePrices
 };
 
-function updatePrices() {
+function updatePrices(options = {}) {
   const startedAt = Date.now();
   console.info('[crawler] Update job started');
-  getAndUpdatePrices().catch((error) => {
+  return getAndUpdatePrices(options).catch((error) => {
     console.error('[crawler] Update job failed', {
       durationMs: Date.now() - startedAt,
       error
@@ -25,60 +33,151 @@ function updatePrices() {
   });
 }
 
-async function getAndUpdatePrices() {
-  let html = '';
-  const result = await query(
-    `SELECT * FROM track WHERE active = true or (last_modified_at >= NOW() - INTERVAL '7 days')`
-  );
-  console.info('[crawler] Loaded tracks for update', {
-    trackCount: result.rows.length
+async function getAndUpdatePrices(options = {}) {
+  const runStartedAt = new Date();
+  const run = await createCrawlerRun({
+    trigger_type: options.triggerType || 'scheduled',
+    triggered_by_user_id: options.triggeredBy && options.triggeredBy.id,
+    triggered_by_email: options.triggeredBy && options.triggeredBy.email,
+    status: 'running',
+    started_at: runStartedAt
   });
 
-  for (let i = 0; i < result.rows.length; i++) {
-    const track = result.rows[i];
-    const startedAt = Date.now();
+  const summary = createRunSummary(runStartedAt);
 
-    try {
-      console.info('[crawler] Processing track', {
-        id: track.id,
-        productName: track.product_name,
-        currPrice: track.curr_price,
-        url: track.price_url
-      });
+  try {
+    const result = await query(
+      `SELECT * FROM track WHERE active = true or (last_modified_at >= NOW() - INTERVAL '7 days')`
+    );
+    console.info('[crawler] Loaded tracks for update', {
+      runId: run.id,
+      trackCount: result.rows.length
+    });
 
-      if (track.requires_javascript) {
-        html = await getRenderedHTML(track);
-      } else {
-        html = await getHTML(track);
-      }
+    for (let i = 0; i < result.rows.length; i++) {
+      const track = result.rows[i];
+      const startedAt = Date.now();
+      let itemResult = createRunItemResult(track);
 
-      if (shouldSaveHtml('update', false)) {
-        saveHTMLFile(html, {
-          action: 'update',
-          trackId: track.id,
-          userId: track.user_id,
+      try {
+        console.info('[crawler] Processing track', {
+          runId: run.id,
+          id: track.id,
+          productName: track.product_name,
+          currPrice: track.curr_price,
           url: track.price_url
+        });
+
+        const trackContext = {
+          ...track,
+          action: 'update',
+          run_id: run.id
+        };
+
+        let html = '';
+        if (track.requires_javascript) {
+          html = await getRenderedHTML(trackContext);
+        } else {
+          html = await getHTML(trackContext);
+        }
+
+        itemResult.htmlLookupSuccess = true;
+        itemResult.stage = track.requires_javascript ? 'render-html' : 'fetch-html';
+
+        if (shouldSaveHtml('update', false)) {
+          saveHTMLFile(html, {
+            action: 'update',
+            trackId: track.id,
+            userId: track.user_id,
+            url: track.price_url
+          });
+        }
+
+        itemResult = {
+          ...itemResult,
+          ...(await findPriceFromDiv(html, trackContext))
+        };
+
+        console.info('[crawler] Track processed', {
+          runId: run.id,
+          id: track.id,
+          status: itemResult.status,
+          durationMs: Date.now() - startedAt
+        });
+      } catch (error) {
+        itemResult = {
+          ...itemResult,
+          status: 'fetch_failed',
+          stage: error && error.details && error.details.stage ? error.details.stage : (track.requires_javascript ? 'render-html' : 'fetch-html'),
+          errorMessage: error.message,
+          failureLogId: error && error.details ? error.details.failureLogId || null : null
+        };
+
+        console.error('[crawler] Track update failed', {
+          runId: run.id,
+          id: track.id,
+          productName: track.product_name,
+          url: track.price_url,
+          durationMs: Date.now() - startedAt,
+          error
         });
       }
 
-      // Find current price in html and compare with previous price
-      await findPriceFromDiv(html, track);
-      console.info('[crawler] Track processed', {
-        id: track.id,
-        durationMs: Date.now() - startedAt
-      });
-    } catch (error) {
-      console.error('[crawler] Track update failed', {
-        id: track.id,
-        productName: track.product_name,
-        url: track.price_url,
-        durationMs: Date.now() - startedAt,
-        error
-      });
-    }
-  }
+      itemResult.durationMs = Date.now() - startedAt;
 
-  console.info('[crawler] Update job finished');
+      const insertedItem = await insertCrawlerRunItem({
+        run_id: run.id,
+        track_id: track.id,
+        user_id: track.user_id,
+        product_name: track.product_name,
+        product_url: track.price_url,
+        requires_javascript: track.requires_javascript,
+        status: itemResult.status,
+        stage: itemResult.stage,
+        html_lookup_success: itemResult.htmlLookupSuccess,
+        previous_price: itemResult.previousPrice,
+        current_price: itemResult.currentPrice,
+        price_direction: itemResult.priceDirection,
+        marked_inactive: itemResult.markedInactive,
+        reactivated: itemResult.reactivated,
+        failure_log_id: itemResult.failureLogId,
+        error_message: itemResult.errorMessage,
+        duration_ms: itemResult.durationMs
+      });
+
+      if (itemResult.failureLogId) {
+        await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+          run_id: run.id,
+          run_item_id: insertedItem.id
+        });
+      }
+
+      applyRunItemToSummary(summary, itemResult);
+    }
+
+    summary.status = summary.error_count > 0 ? 'partial' : 'success';
+  } catch (error) {
+    summary.status = 'failed';
+    summary.error_count += 1;
+    console.error('[crawler] Update job query failed', {
+      runId: run.id,
+      error
+    });
+  } finally {
+    summary.finished_at = new Date();
+    summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
+    summary.track_count = summary.track_count || 0;
+    await finalizeCrawlerRun(run.id, summary);
+    console.info('[crawler] Update job finished', {
+      runId: run.id,
+      status: summary.status,
+      trackCount: summary.track_count,
+      updatedCount: summary.updated_count,
+      unchangedCount: summary.unchanged_count,
+      errorCount: summary.error_count,
+      durationMs: summary.duration_ms
+    });
+  }
 }
 
 function getRandomUserAgent() {
@@ -155,12 +254,18 @@ async function getHTML(url) {
     });
   }
 
-  await logCrawlerFailure(target, 'fetch-html', lastError, {
+  const failureLogId = await logCrawlerFailure(target, 'fetch-html', lastError, {
     htmlFilePath,
     status: finalFailureDetails ? finalFailureDetails.status : null,
     userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null
   });
-  throw new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+  const finalError = new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+  finalError.details = {
+    ...(lastError && lastError.details ? lastError.details : {}),
+    failureLogId,
+    stage: 'fetch-html'
+  };
+  throw finalError;
 }
 
 async function getRenderedHTML(url) {
@@ -204,8 +309,23 @@ async function getRenderedHTML(url) {
       }
     }
 
-    await logCrawlerFailure(target, 'render-html', lastError, {});
-    throw new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+    const failureLogId = await logCrawlerFailure(target, 'render-html', lastError, {});
+    if (lastError && lastError.details) {
+      lastError.details.failureLogId = failureLogId;
+      lastError.details.stage = 'render-html';
+    } else if (lastError) {
+      lastError.details = {
+        failureLogId,
+        stage: 'render-html'
+      };
+    }
+    const finalError = new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
+    finalError.details = {
+      ...(lastError && lastError.details ? lastError.details : {}),
+      failureLogId,
+      stage: 'render-html'
+    };
+    throw finalError;
   } finally {
     await browser.close();
   }
@@ -270,12 +390,22 @@ async function findPriceFromDiv(html, track) {
       id: track.id,
       url: track.price_url
     });
-    await logCrawlerFailure(track, 'find-price', new Error('Price match not found'), {
+    const failureLogId = await logCrawlerFailure(track, 'find-price', new Error('Price match not found'), {
       htmlFilePath,
       matchLength: matches && matches[1] ? matches[1].length : null
     });
     await setTrackAsInactive(track);
-    return;
+    return {
+      status: 'match_failed',
+      stage: 'find-price',
+      previousPrice: track.curr_price,
+      currentPrice: null,
+      priceDirection: null,
+      markedInactive: true,
+      reactivated: false,
+      failureLogId,
+      errorMessage: 'Price match not found'
+    };
   } 
 
   // If numer has more than 20 digits then something went wrong in matching
@@ -287,6 +417,11 @@ async function findPriceFromDiv(html, track) {
   if (isNumeric(match)) {
     if (match !== track.curr_price) {
       await updatePrice(match, track);
+      const priceDirection = Number(match) < Number(track.curr_price)
+        ? 'lower'
+        : Number(match) > Number(track.curr_price)
+          ? 'higher'
+          : 'same';
       console.info('[crawler] Price changed', {
         id: track.id,
         productName: track.product_name,
@@ -295,8 +430,20 @@ async function findPriceFromDiv(html, track) {
       });
 
       // Update track object with new price before sending email
+      const previousPrice = track.curr_price;
       track.curr_price = match;
       await sendPriceUpdateEmail(track);
+      return {
+        status: priceDirection === 'lower' ? 'updated_lower' : priceDirection === 'higher' ? 'updated_higher' : 'updated_other',
+        stage: 'find-price',
+        previousPrice,
+        currentPrice: match,
+        priceDirection,
+        markedInactive: false,
+        reactivated: false,
+        failureLogId: null,
+        errorMessage: null
+      };
     } else {
       console.info('[crawler] Price unchanged', {
         id: track.id,
@@ -308,7 +455,29 @@ async function findPriceFromDiv(html, track) {
       console.info('[crawler] Track reactivated', {
         id: track.id
       });
+      return {
+        status: 'reactivated',
+        stage: 'find-price',
+        previousPrice: track.curr_price,
+        currentPrice: match,
+        priceDirection: 'same',
+        markedInactive: false,
+        reactivated: true,
+        failureLogId: null,
+        errorMessage: null
+      };
     }
+    return {
+      status: 'unchanged',
+      stage: 'find-price',
+      previousPrice: track.curr_price,
+      currentPrice: match,
+      priceDirection: 'same',
+      markedInactive: false,
+      reactivated: false,
+      failureLogId: null,
+      errorMessage: null
+    };
   } else {
     let htmlFilePath = null;
     if (shouldSaveHtml('update', true)) {
@@ -325,12 +494,22 @@ async function findPriceFromDiv(html, track) {
       id: track.id,
       rawMatch: matches[1]
     });
-    await logCrawlerFailure(track, 'find-price', new Error('Extracted match was not numeric'), {
+    const failureLogId = await logCrawlerFailure(track, 'find-price', new Error('Extracted match was not numeric'), {
       htmlFilePath,
       rawMatch: matches[1]
     });
     await setTrackAsInactive(track);
-    return;
+    return {
+      status: 'non_numeric_match',
+      stage: 'find-price',
+      previousPrice: track.curr_price,
+      currentPrice: null,
+      priceDirection: null,
+      markedInactive: true,
+      reactivated: false,
+      failureLogId,
+      errorMessage: 'Extracted match was not numeric'
+    };
   }
 };
 
@@ -749,6 +928,8 @@ function buildHtmlFilePath(metadata) {
 async function logCrawlerFailure(target, stage, error, extraDetails = {}) {
   try {
     const failure = await insertCrawlerFailureLog({
+      run_id: target.run_id || null,
+      run_item_id: target.run_item_id || null,
       track_id: target.id || null,
       user_id: target.user_id || null,
       user_email: target.email || null,
@@ -772,11 +953,100 @@ async function logCrawlerFailure(target, stage, error, extraDetails = {}) {
       stage,
       url: target.price_url || null
     });
+    return failure.id;
   } catch (logError) {
     console.error('[crawler] Failed to persist crawler failure log', {
       stage,
       url: target.price_url || null,
       error: logError
     });
+    return null;
+  }
+}
+
+function createRunSummary(startedAt) {
+  return {
+    status: 'running',
+    started_at: startedAt,
+    finished_at: null,
+    duration_ms: 0,
+    track_count: 0,
+    html_success_count: 0,
+    html_failure_count: 0,
+    unchanged_count: 0,
+    updated_count: 0,
+    lowered_count: 0,
+    increased_count: 0,
+    inactive_count: 0,
+    reactivated_count: 0,
+    error_count: 0,
+    biggest_drop_amount: null,
+    biggest_increase_amount: null
+  };
+}
+
+function createRunItemResult(track) {
+  return {
+    status: 'pending',
+    stage: 'start',
+    htmlLookupSuccess: false,
+    previousPrice: track.curr_price,
+    currentPrice: track.curr_price,
+    priceDirection: null,
+    markedInactive: false,
+    reactivated: false,
+    failureLogId: null,
+    errorMessage: null,
+    durationMs: 0
+  };
+}
+
+function applyRunItemToSummary(summary, item) {
+  summary.track_count += 1;
+
+  if (item.htmlLookupSuccess) {
+    summary.html_success_count += 1;
+  } else {
+    summary.html_failure_count += 1;
+  }
+
+  if (item.status === 'unchanged') {
+    summary.unchanged_count += 1;
+  }
+
+  if (item.status === 'updated_lower' || item.status === 'updated_higher' || item.status === 'updated_other') {
+    summary.updated_count += 1;
+  }
+
+  if (item.status === 'updated_lower') {
+    summary.lowered_count += 1;
+    const dropAmount = Number(item.previousPrice) - Number(item.currentPrice);
+    if (Number.isFinite(dropAmount)) {
+      summary.biggest_drop_amount = summary.biggest_drop_amount == null
+        ? dropAmount
+        : Math.max(summary.biggest_drop_amount, dropAmount);
+    }
+  }
+
+  if (item.status === 'updated_higher') {
+    summary.increased_count += 1;
+    const increaseAmount = Number(item.currentPrice) - Number(item.previousPrice);
+    if (Number.isFinite(increaseAmount)) {
+      summary.biggest_increase_amount = summary.biggest_increase_amount == null
+        ? increaseAmount
+        : Math.max(summary.biggest_increase_amount, increaseAmount);
+    }
+  }
+
+  if (item.markedInactive) {
+    summary.inactive_count += 1;
+  }
+
+  if (item.reactivated) {
+    summary.reactivated_count += 1;
+  }
+
+  if (item.failureLogId || item.errorMessage) {
+    summary.error_count += 1;
   }
 }

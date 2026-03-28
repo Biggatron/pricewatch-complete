@@ -59,33 +59,45 @@ async function getAndUpdatePrices(options = {}) {
 
     for (let i = 0; i < result.rows.length; i++) {
       const track = result.rows[i];
-      const itemResult = await processTrackUpdate(track, run.id);
+      let itemResult = null;
 
-      const insertedItem = await insertCrawlerRunItem({
-        run_id: run.id,
-        track_id: track.id,
-        user_id: track.user_id,
-        product_name: track.product_name,
-        product_url: track.price_url,
-        requires_javascript: track.requires_javascript,
-        status: itemResult.status,
-        stage: itemResult.stage,
-        html_lookup_success: itemResult.htmlLookupSuccess,
-        previous_price: itemResult.previousPrice,
-        current_price: itemResult.currentPrice,
-        price_direction: itemResult.priceDirection,
-        marked_inactive: itemResult.markedInactive,
-        reactivated: itemResult.reactivated,
-        failure_log_id: itemResult.failureLogId,
-        error_message: itemResult.errorMessage,
-        duration_ms: itemResult.durationMs
-      });
+      try {
+        itemResult = await processTrackUpdate(track, run.id);
 
-      if (itemResult.failureLogId) {
-        await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+        const insertedItem = await insertCrawlerRunItem({
           run_id: run.id,
-          run_item_id: insertedItem.id
+          track_id: track.id,
+          user_id: track.user_id,
+          product_name: track.product_name,
+          product_url: track.price_url,
+          requires_javascript: track.requires_javascript,
+          status: itemResult.status,
+          stage: itemResult.stage,
+          html_lookup_success: itemResult.htmlLookupSuccess,
+          previous_price: itemResult.previousPrice,
+          current_price: itemResult.currentPrice,
+          price_direction: itemResult.priceDirection,
+          marked_inactive: itemResult.markedInactive,
+          reactivated: itemResult.reactivated,
+          failure_log_id: itemResult.failureLogId,
+          error_message: itemResult.errorMessage,
+          duration_ms: itemResult.durationMs
         });
+
+        if (itemResult.failureLogId) {
+          await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+            run_id: run.id,
+            run_item_id: insertedItem.id
+          });
+        }
+      } catch (error) {
+        console.error('[crawler] Track processing pipeline failed unexpectedly', {
+          runId: run.id,
+          trackId: track.id,
+          url: track.price_url,
+          error
+        });
+        itemResult = await handleUnexpectedTrackError(track, run.id, error, itemResult);
       }
 
       applyRunItemToSummary(summary, itemResult);
@@ -103,16 +115,24 @@ async function getAndUpdatePrices(options = {}) {
     summary.finished_at = new Date();
     summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
     summary.track_count = summary.track_count || 0;
-    await finalizeCrawlerRun(run.id, summary);
-    console.info('[crawler] Update job finished', {
-      runId: run.id,
-      status: summary.status,
-      trackCount: summary.track_count,
-      updatedCount: summary.updated_count,
-      unchangedCount: summary.unchanged_count,
-      errorCount: summary.error_count,
-      durationMs: summary.duration_ms
-    });
+    try {
+      await finalizeCrawlerRun(run.id, summary);
+      console.info('[crawler] Update job finished', {
+        runId: run.id,
+        status: summary.status,
+        trackCount: summary.track_count,
+        updatedCount: summary.updated_count,
+        unchangedCount: summary.unchanged_count,
+        errorCount: summary.error_count,
+        durationMs: summary.duration_ms
+      });
+    } catch (finalizeError) {
+      console.error('[crawler] Failed to finalize crawler run', {
+        runId: run.id,
+        status: summary.status,
+        error: finalizeError
+      });
+    }
   }
 }
 
@@ -127,41 +147,60 @@ async function updateSingleTrack(track, options = {}) {
   });
 
   const summary = createRunSummary(runStartedAt);
-  const itemResult = await processTrackUpdate(track, run.id);
+  let itemResult = null;
 
-  const insertedItem = await insertCrawlerRunItem({
-    run_id: run.id,
-    track_id: track.id,
-    user_id: track.user_id,
-    product_name: track.product_name,
-    product_url: track.price_url,
-    requires_javascript: track.requires_javascript,
-    status: itemResult.status,
-    stage: itemResult.stage,
-    html_lookup_success: itemResult.htmlLookupSuccess,
-    previous_price: itemResult.previousPrice,
-    current_price: itemResult.currentPrice,
-    price_direction: itemResult.priceDirection,
-    marked_inactive: itemResult.markedInactive,
-    reactivated: itemResult.reactivated,
-    failure_log_id: itemResult.failureLogId,
-    error_message: itemResult.errorMessage,
-    duration_ms: itemResult.durationMs
-  });
+  try {
+    itemResult = await processTrackUpdate(track, run.id);
 
-  if (itemResult.failureLogId) {
-    await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+    const insertedItem = await insertCrawlerRunItem({
       run_id: run.id,
-      run_item_id: insertedItem.id
+      track_id: track.id,
+      user_id: track.user_id,
+      product_name: track.product_name,
+      product_url: track.price_url,
+      requires_javascript: track.requires_javascript,
+      status: itemResult.status,
+      stage: itemResult.stage,
+      html_lookup_success: itemResult.htmlLookupSuccess,
+      previous_price: itemResult.previousPrice,
+      current_price: itemResult.currentPrice,
+      price_direction: itemResult.priceDirection,
+      marked_inactive: itemResult.markedInactive,
+      reactivated: itemResult.reactivated,
+      failure_log_id: itemResult.failureLogId,
+      error_message: itemResult.errorMessage,
+      duration_ms: itemResult.durationMs
     });
+
+    if (itemResult.failureLogId) {
+      await updateCrawlerFailureLogLinks(itemResult.failureLogId, {
+        run_id: run.id,
+        run_item_id: insertedItem.id
+      });
+    }
+  } catch (error) {
+    console.error('[crawler] Single-track processing pipeline failed unexpectedly', {
+      runId: run.id,
+      trackId: track.id,
+      url: track.price_url,
+      error
+    });
+    itemResult = await handleUnexpectedTrackError(track, run.id, error, itemResult);
+  } finally {
+    applyRunItemToSummary(summary, itemResult || createRunItemResult(track));
+    summary.status = summary.error_count > 0 ? 'partial' : 'success';
+    summary.finished_at = new Date();
+    summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
+
+    try {
+      await finalizeCrawlerRun(run.id, summary);
+    } catch (finalizeError) {
+      console.error('[crawler] Failed to finalize single-track crawler run', {
+        runId: run.id,
+        error: finalizeError
+      });
+    }
   }
-
-  applyRunItemToSummary(summary, itemResult);
-  summary.status = summary.error_count > 0 ? 'partial' : 'success';
-  summary.finished_at = new Date();
-  summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
-
-  await finalizeCrawlerRun(run.id, summary);
 
   return {
     runId: run.id,
@@ -336,7 +375,15 @@ async function getRenderedHTML(url) {
 function saveHTMLFile(html, metadata) {
   const fileName = buildHtmlFilePath(metadata);
   fs.writeFile(fileName, html, function(err) {
-    if (err) throw err;
+    if (err) {
+      console.error('[crawler] Failed to save HTML file', {
+        fileName,
+        action: metadata.action,
+        trackId: metadata.trackId || null,
+        error: err
+      });
+      return;
+    }
     console.info('[crawler] HTML file saved', {
       fileName,
       action: metadata.action,
@@ -957,6 +1004,10 @@ async function updatePrice(newPrice, track) {
 
 async function sendEmail(email) {
   const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
+  email.status = 'pending';
+  email.error_message = null;
+  email.sent_at = null;
+
   if (sendEmailsEnabled) {
     try {
       const emailService = await getAppConfig('email.service', keys.email && keys.email.service);
@@ -985,6 +1036,8 @@ async function sendEmail(email) {
       
       // Email sent successfully
       email.delivered = true;
+      email.status = 'sent';
+      email.sent_at = new Date();
       console.info('[crawler] Email sent', {
         trackId: email.track_id,
         recipient: email.email,
@@ -997,8 +1050,13 @@ async function sendEmail(email) {
         subject: email.subject,
         error
       });
+      email.status = 'failed';
+      email.error_message = error.message;
     }
+  } else {
+    email.status = 'skipped_disabled';
   }
+
   await insertEmail(email);
 }
 
@@ -1009,6 +1067,7 @@ async function sendPriceUpdateEmail(track) {
     orig_price: track.orig_price,
     curr_price: track.curr_price,
     email: track.email,
+    email_type: 'price_change',
     delivered: false,
     created_at: new Date(),
     subject: `Price change: ${track.product_name}`,
@@ -1024,20 +1083,87 @@ async function sendTrackInactiveEmail(track) {
     orig_price: track.orig_price,
     curr_price: null,
     email: track.email,
+    email_type: 'track_inactive',
     delivered: false,
     created_at: new Date(),
-    subject: `Possible price change: ${track.product_name}`,
-    body: `Price of "${track.product_name}" was not found on product page. Original price was ${track.orig_price}. This could indicate a price change some other product change.`
+    subject: `Tracking paused: ${track.product_name}`,
+    body: `Tracking for "${track.product_name}" has been paused because the price could not be checked successfully. Original price was ${track.orig_price}. Please review the product page here: ${track.price_url}`
   };
   await sendEmail(email);
 }
 
+let emailLogTableReadyPromise = null;
+
+async function ensureEmailLogTable() {
+  if (!emailLogTableReadyPromise) {
+    emailLogTableReadyPromise = ensureEmailLogTableColumns().catch((error) => {
+      emailLogTableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await emailLogTableReadyPromise;
+}
+
+async function ensureEmailLogTableColumns() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS email_logs (
+      "id" serial PRIMARY KEY,
+      "track_id" integer,
+      "product_name" varchar(64),
+      "orig_price" numeric,
+      "curr_price" numeric,
+      "email" varchar(256),
+      "email_type" varchar(64),
+      "status" varchar(32),
+      "subject" text,
+      "body" text,
+      "error_message" text,
+      "delivered" boolean,
+      "sent_at" timestamp,
+      "created_at" timestamp
+    )
+  `);
+
+  await query(`
+    ALTER TABLE email_logs
+      ADD COLUMN IF NOT EXISTS track_id integer,
+      ADD COLUMN IF NOT EXISTS product_name varchar(64),
+      ADD COLUMN IF NOT EXISTS orig_price numeric,
+      ADD COLUMN IF NOT EXISTS curr_price numeric,
+      ADD COLUMN IF NOT EXISTS email varchar(256),
+      ADD COLUMN IF NOT EXISTS email_type varchar(64),
+      ADD COLUMN IF NOT EXISTS status varchar(32),
+      ADD COLUMN IF NOT EXISTS subject text,
+      ADD COLUMN IF NOT EXISTS body text,
+      ADD COLUMN IF NOT EXISTS error_message text,
+      ADD COLUMN IF NOT EXISTS delivered boolean,
+      ADD COLUMN IF NOT EXISTS sent_at timestamp,
+      ADD COLUMN IF NOT EXISTS created_at timestamp
+  `);
+}
+
 async function insertEmail(email) {
   try {
+    await ensureEmailLogTable();
     // Insert email data into the database
     const result = await query(
-      `INSERT INTO email_logs (track_id, product_name, orig_price, curr_price, email, delivered, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO email_logs (
+        track_id,
+        product_name,
+        orig_price,
+        curr_price,
+        email,
+        email_type,
+        status,
+        subject,
+        body,
+        error_message,
+        delivered,
+        sent_at,
+        created_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id`,
       [
         email.track_id,
@@ -1045,7 +1171,13 @@ async function insertEmail(email) {
         email.orig_price,
         email.curr_price,
         email.email,
+        email.email_type || 'generic',
+        email.status || (email.delivered ? 'sent' : 'pending'),
+        email.subject || null,
+        email.body || null,
+        email.error_message || null,
         email.delivered,
+        email.sent_at || null,
         email.created_at,
       ]
     );
@@ -1202,13 +1334,7 @@ async function processTrackUpdate(track, runId) {
       durationMs: Date.now() - startedAt
     });
   } catch (error) {
-    itemResult = {
-      ...itemResult,
-      status: 'fetch_failed',
-      stage: error && error.details && error.details.stage ? error.details.stage : (track.requires_javascript ? 'render-html' : 'fetch-html'),
-      errorMessage: error.message,
-      failureLogId: error && error.details ? error.details.failureLogId || null : null
-    };
+    itemResult = await handleUnexpectedTrackError(track, runId, error, itemResult);
 
     console.error('[crawler] Track update failed', {
       runId,
@@ -1222,6 +1348,52 @@ async function processTrackUpdate(track, runId) {
 
   itemResult.durationMs = Date.now() - startedAt;
   return itemResult;
+}
+
+async function handleUnexpectedTrackError(track, runId, error, existingResult = null) {
+  const stage = error && error.details && error.details.stage
+    ? error.details.stage
+    : (track.requires_javascript ? 'render-html' : 'fetch-html');
+
+  let failureLogId = error && error.details ? error.details.failureLogId || null : null;
+  if (!failureLogId) {
+    failureLogId = await logCrawlerFailure(
+      {
+        ...track,
+        action: 'update',
+        run_id: runId
+      },
+      stage,
+      error,
+      {}
+    );
+  }
+
+  let markedInactive = false;
+  try {
+    await setTrackAsInactive(track);
+    track.active = false;
+    markedInactive = true;
+  } catch (inactiveError) {
+    console.error('[crawler] Failed to mark track inactive after unexpected error', {
+      runId,
+      trackId: track.id,
+      error: inactiveError
+    });
+  }
+
+  return {
+    ...(existingResult || createRunItemResult(track)),
+    status: 'fetch_failed',
+    stage,
+    previousPrice: existingResult && existingResult.previousPrice != null ? existingResult.previousPrice : track.curr_price,
+    currentPrice: existingResult && existingResult.currentPrice != null ? existingResult.currentPrice : null,
+    priceDirection: existingResult ? existingResult.priceDirection : null,
+    markedInactive,
+    reactivated: false,
+    failureLogId,
+    errorMessage: error && error.message ? error.message : 'Unexpected crawler error'
+  };
 }
 
 function createRunSummary(startedAt) {

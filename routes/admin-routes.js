@@ -2,7 +2,7 @@ const router = require('express').Router();
 const keys = require('../config/keys');
 const query = require('../db/db');
 const crawler = require('../utilities/crawler');
-const { readRecentLogs, getLogFilePath } = require('../utilities/logger');
+const { readRecentLogs, getLogFilePath, clearLogFile } = require('../utilities/logger');
 const {
   getAllAppConfig,
   getAppConfigRow,
@@ -40,7 +40,8 @@ const adminCheck = (req, res, next) => {
       tracks: [],
       appConfigs: [],
       recentFailedTrackLogs: [],
-      recentEmailLogs: []
+      recentEmailLogs: [],
+      activeTab: getActiveAdminTab(req.query.tab)
     });
   }
   next();
@@ -68,9 +69,23 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       appConfigs,
       recentFailedTrackLogs,
       recentEmailLogs,
+      activeTab: getActiveAdminTab(req.query.tab),
       logFilePath: getLogFilePath(),
       accessDenied: false
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/logs/clear', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    await clearLogFile();
+    console.info('[admin] Log file cleared', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email
+    });
+    res.status(200).json({ message: 'Log file cleared' });
   } catch (error) {
     next(error);
   }
@@ -338,4 +353,9 @@ function normalizeConfigValue(value, dataType) {
   }
 
   return value == null ? '' : String(value);
+}
+
+function getActiveAdminTab(tab) {
+  const allowedTabs = new Set(['overview', 'tracks', 'config', 'logs']);
+  return allowedTabs.has(tab) ? tab : 'overview';
 }

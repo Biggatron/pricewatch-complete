@@ -33,7 +33,13 @@ CREATE TABLE email_logs (
     "orig_price" decimal,
     "curr_price" decimal,
     "email" varchar(256),
+    "email_type" varchar(64),
+    "status" varchar(32),
+    "subject" text,
+    "body" text,
+    "error_message" text,
     "delivered" boolean,
+    "sent_at" timestamp,
     "created_at" timestamp
 );
 

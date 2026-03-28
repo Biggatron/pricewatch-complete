@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <%- include('./partials/head'); %>
-  <link rel="stylesheet" href="/css/admin.css" type="text/css">
-  <link rel="stylesheet" href="/css/track.css" type="text/css">
+  <link rel="stylesheet" href="/css/admin.css?v=20260328-2" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260328-2" type="text/css">
 </head>
 <body class="body-container">
 
@@ -25,17 +25,18 @@
       </div>
     <% } else { %>
       <div class="admin-tabs" role="tablist" aria-label="Admin sections">
-        <button class="admin-tab-button is-active" type="button" data-tab-target="overview" role="tab" aria-selected="true">Overview</button>
-        <button class="admin-tab-button" type="button" data-tab-target="tracks" role="tab" aria-selected="false">Track Manager</button>
-        <button class="admin-tab-button" type="button" data-tab-target="config" role="tab" aria-selected="false">Config</button>
-        <button class="admin-tab-button" type="button" data-tab-target="logs" role="tab" aria-selected="false">Logs</button>
+        <button class="admin-tab-button <%= activeTab === 'overview' ? 'is-active' : '' %>" type="button" data-tab-target="overview" role="tab" aria-selected="<%= activeTab === 'overview' ? 'true' : 'false' %>">Overview</button>
+        <button class="admin-tab-button <%= activeTab === 'tracks' ? 'is-active' : '' %>" type="button" data-tab-target="tracks" role="tab" aria-selected="<%= activeTab === 'tracks' ? 'true' : 'false' %>">Track Manager</button>
+        <button class="admin-tab-button <%= activeTab === 'config' ? 'is-active' : '' %>" type="button" data-tab-target="config" role="tab" aria-selected="<%= activeTab === 'config' ? 'true' : 'false' %>">Config</button>
+        <button class="admin-tab-button <%= activeTab === 'logs' ? 'is-active' : '' %>" type="button" data-tab-target="logs" role="tab" aria-selected="<%= activeTab === 'logs' ? 'true' : 'false' %>">Logs</button>
       </div>
 
-      <section class="admin-tab-panel is-active" data-tab-panel="overview">
+      <section class="admin-tab-panel <%= activeTab === 'overview' ? 'is-active' : '' %>" data-tab-panel="overview">
         <div class="admin-panel">
           <h2 class="admin-section-title">Actions</h2>
           <div class="admin-inline-actions">
             <button class="btn" onclick="updateTracks()">Update tracks</button>
+            <button class="btn admin-cancel-btn" onclick="clearRecentLogFile()">Clear recent log file</button>
           </div>
         </div>
 
@@ -172,7 +173,7 @@
         </div>
       </section>
 
-      <section class="admin-tab-panel" data-tab-panel="tracks">
+      <section class="admin-tab-panel <%= activeTab === 'tracks' ? 'is-active' : '' %>" data-tab-panel="tracks">
         <div class="admin-panel">
           <h2 class="admin-section-title">Track manager</h2>
           <% if (!tracks || tracks.length === 0) { %>
@@ -259,7 +260,7 @@
         </div>
       </section>
 
-      <section class="admin-tab-panel" data-tab-panel="config">
+      <section class="admin-tab-panel <%= activeTab === 'config' ? 'is-active' : '' %>" data-tab-panel="config">
         <div class="admin-panel">
           <h2 class="admin-section-title">Config table</h2>
           <p class="admin-subtitle">Database-backed application settings. Changes apply automatically where the app reads from <code>app_config</code>.</p>
@@ -317,7 +318,7 @@
         </div>
       </section>
 
-      <section class="admin-tab-panel" data-tab-panel="logs">
+      <section class="admin-tab-panel <%= activeTab === 'logs' ? 'is-active' : '' %>" data-tab-panel="logs">
         <div class="admin-panel">
           <h2 class="admin-section-title">Recent logs</h2>
           <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
@@ -379,12 +380,16 @@
                   <tr>
                     <th>ID</th>
                     <th>When</th>
+                    <th>Type</th>
+                    <th>Status</th>
                     <th>Track</th>
                     <th>Product</th>
+                    <th>Subject</th>
                     <th>Original</th>
                     <th>Current</th>
                     <th>Email</th>
                     <th>Delivered</th>
+                    <th>Error</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -392,12 +397,16 @@
                     <tr>
                       <td><%= logEntry.id %></td>
                       <td><%= logEntry.created_at ? new Date(logEntry.created_at).toLocaleString() : '-' %></td>
+                      <td><%= logEntry.email_type || 'generic' %></td>
+                      <td><%= logEntry.status || (logEntry.delivered ? 'sent' : 'pending') %></td>
                       <td><%= logEntry.track_id || '-' %></td>
                       <td><%= logEntry.product_name || '-' %></td>
+                      <td><%= logEntry.subject || '-' %></td>
                       <td><%= logEntry.orig_price == null ? '-' : logEntry.orig_price %></td>
                       <td><%= logEntry.curr_price == null ? '-' : logEntry.curr_price %></td>
                       <td><%= logEntry.email || '-' %></td>
                       <td><%= logEntry.delivered ? 'Yes' : 'No' %></td>
+                      <td><%= logEntry.error_message || '-' %></td>
                     </tr>
                   <% }); %>
                 </tbody>
@@ -432,15 +441,9 @@
   document.querySelectorAll('[data-tab-target]').forEach((tabButton) => {
     tabButton.addEventListener('click', () => {
       const target = tabButton.dataset.tabTarget;
-
-      document.querySelectorAll('[data-tab-target]').forEach((button) => {
-        button.classList.toggle('is-active', button === tabButton);
-        button.setAttribute('aria-selected', button === tabButton ? 'true' : 'false');
-      });
-
-      document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
-        panel.classList.toggle('is-active', panel.dataset.tabPanel === target);
-      });
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', target);
+      window.location.href = url.toString();
     });
   });
 
@@ -465,6 +468,37 @@
     } catch (error) {
       console.log(error);
       showToast('Something went wrong');
+    }
+  }
+
+  async function clearRecentLogFile() {
+    const confirmed = window.confirm('Clear the recent log file?');
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/admin/logs/clear', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        showToast(body && body.error ? body.error : 'Failed to clear log file');
+        return;
+      }
+
+      showToast('Log file cleared');
+
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'logs');
+      window.location.href = url.toString();
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to clear log file');
     }
   }
 

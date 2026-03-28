@@ -21,7 +21,7 @@ function initializeLogger() {
   const logDirectory = path.resolve(process.cwd(), keys.logging.directory);
   fs.mkdirSync(logDirectory, { recursive: true });
   logFilePath = path.join(logDirectory, keys.logging.filename);
-  logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+  openLogStream();
 
   console.log = createLoggerMethod('log');
   console.info = createLoggerMethod('info');
@@ -32,6 +32,10 @@ function initializeLogger() {
   console.info(`File logging enabled at ${logFilePath}`);
 
   return logFilePath;
+}
+
+function openLogStream() {
+  logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 }
 
 function createLoggerMethod(level) {
@@ -96,8 +100,23 @@ async function readRecentLogs(maxLines = keys.logging.maxLines) {
   return lines.slice(-maxLines);
 }
 
+async function clearLogFile() {
+  const filePath = getLogFilePath();
+
+  if (logStream) {
+    await new Promise((resolve) => {
+      logStream.end(resolve);
+    });
+  }
+
+  await fs.promises.writeFile(filePath, '', 'utf8');
+  openLogStream();
+  originalConsole.info(`Log file cleared at ${filePath}`);
+}
+
 module.exports = {
   initializeLogger,
   getLogFilePath,
-  readRecentLogs
+  readRecentLogs,
+  clearLogFile
 };

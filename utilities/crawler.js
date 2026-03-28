@@ -2,6 +2,7 @@ const puppeteer = require('puppeteer');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
+const path = require('path');
 const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
@@ -374,6 +375,7 @@ async function getRenderedHTML(url) {
 
 function saveHTMLFile(html, metadata) {
   const fileName = buildHtmlFilePath(metadata);
+  fs.mkdirSync(path.dirname(fileName), { recursive: true });
   fs.writeFile(fileName, html, function(err) {
     if (err) {
       console.error('[crawler] Failed to save HTML file', {
@@ -1014,9 +1016,26 @@ async function sendEmail(email) {
       const emailAddress = await getAppConfig('email.address', keys.email && keys.email.address);
       const emailPassword = await getAppConfig('email.password', keys.email && keys.email.password);
 
+      if (!emailService || !emailAddress || !emailPassword) {
+        email.status = 'skipped_missing_config';
+        email.error_message = 'Email configuration is incomplete. Expected email.service, email.address and email.password.';
+        console.error('[crawler] Skipping email send because configuration is incomplete', {
+          trackId: email.track_id,
+          recipient: email.email,
+          hasService: Boolean(emailService),
+          hasAddress: Boolean(emailAddress),
+          hasPassword: Boolean(emailPassword)
+        });
+        await insertEmail(email);
+        return;
+      }
+
       // Create a transporter
       const transporter = nodemailer.createTransport({
         service: emailService,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
         auth: {
           user: emailAddress, 
           pass: emailPassword,   // App password or your email password

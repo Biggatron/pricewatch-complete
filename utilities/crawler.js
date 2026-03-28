@@ -7,6 +7,7 @@ const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
 const nodemailer = require('nodemailer');
+const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const { getAppConfig } = require('./app-config');
 const {
   insertCrawlerFailureLog,
@@ -17,13 +18,16 @@ const {
   finalizeCrawlerRun,
   insertCrawlerRunItem
 } = require('./crawler-run-log');
+const MAX_MATCH_PRICE = 1000000000;
+const MAX_EMAIL_DELIVERY_ATTEMPTS = 3;
 
 module.exports = {
   updatePrices,
   extractNumber,
   findAndSavePrices,
   updateSingleTrack,
-  getTrackHtmlPreview
+  getTrackHtmlPreview,
+  deliverPendingEmails
 };
 
 function updatePrices(options = {}) {
@@ -48,11 +52,13 @@ async function getAndUpdatePrices(options = {}) {
   });
 
   const summary = createRunSummary(runStartedAt);
+  let processedTracks = false;
 
   try {
     const result = await query(
-      `SELECT * FROM track WHERE active = true or (last_modified_at >= NOW() - INTERVAL '7 days')`
+      `SELECT * FROM track WHERE active = true`
     );
+    processedTracks = true;
     console.info('[crawler] Loaded tracks for update', {
       runId: run.id,
       trackCount: result.rows.length
@@ -113,6 +119,17 @@ async function getAndUpdatePrices(options = {}) {
       error
     });
   } finally {
+    if (processedTracks) {
+      try {
+        await deliverPendingEmails();
+      } catch (emailError) {
+        console.error('[crawler] Failed to process pending email queue after track update run', {
+          runId: run.id,
+          error: emailError
+        });
+      }
+    }
+
     summary.finished_at = new Date();
     summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
     summary.track_count = summary.track_count || 0;
@@ -149,9 +166,11 @@ async function updateSingleTrack(track, options = {}) {
 
   const summary = createRunSummary(runStartedAt);
   let itemResult = null;
+  let trackProcessed = false;
 
   try {
     itemResult = await processTrackUpdate(track, run.id);
+    trackProcessed = true;
 
     const insertedItem = await insertCrawlerRunItem({
       run_id: run.id,
@@ -187,7 +206,20 @@ async function updateSingleTrack(track, options = {}) {
       error
     });
     itemResult = await handleUnexpectedTrackError(track, run.id, error, itemResult);
+    trackProcessed = true;
   } finally {
+    if (trackProcessed) {
+      try {
+        await deliverPendingEmails();
+      } catch (emailError) {
+        console.error('[crawler] Failed to process pending email queue after single-track update', {
+          runId: run.id,
+          trackId: track.id,
+          error: emailError
+        });
+      }
+    }
+
     applyRunItemToSummary(summary, itemResult || createRunItemResult(track));
     summary.status = summary.error_count > 0 ? 'partial' : 'success';
     summary.finished_at = new Date();
@@ -401,7 +433,7 @@ async function findPriceFromDiv(html, track) {
     productName: track.product_name
   });
   const jsonLdPrice = extractPriceFromJsonLd(html);
-  if (isNumeric(jsonLdPrice)) {
+  if (isValidMatchedPrice(jsonLdPrice)) {
     console.info('[crawler] Found price in JSON-LD product schema', {
       id: track.id,
       productName: track.product_name,
@@ -456,7 +488,7 @@ async function findPriceFromDiv(html, track) {
       htmlFilePath,
       matchLength: matches && matches[1] ? matches[1].length : null
     });
-    await setTrackAsInactive(track);
+    const inactiveEmailDurationMs = await setTrackAsInactive(track);
     return {
       status: 'match_failed',
       stage: 'find-price',
@@ -466,13 +498,14 @@ async function findPriceFromDiv(html, track) {
       markedInactive: true,
       reactivated: false,
       failureLogId,
-      errorMessage: 'Price match not found'
+      errorMessage: 'Price match not found',
+      emailDurationMs: inactiveEmailDurationMs
     };
   } 
 
   // If numer has more than 20 digits then something went wrong in matching
   let match = extractNumber(matches[1]);
-  if (match.length > 20) {
+  if (!isValidMatchedPrice(match)) {
     match = ''; 
   }
   if (isNumeric(match)) {
@@ -497,7 +530,7 @@ async function findPriceFromDiv(html, track) {
       htmlFilePath,
       rawMatch: matches[1]
     });
-    await setTrackAsInactive(track);
+    const inactiveEmailDurationMs = await setTrackAsInactive(track);
     return {
       status: 'non_numeric_match',
       stage: 'find-price',
@@ -507,7 +540,8 @@ async function findPriceFromDiv(html, track) {
       markedInactive: true,
       reactivated: false,
       failureLogId,
-      errorMessage: 'Extracted match was not numeric'
+      errorMessage: 'Extracted match was not numeric',
+      emailDurationMs: inactiveEmailDurationMs
     };
   }
 };
@@ -531,7 +565,7 @@ async function handleMatchedPrice(match, track) {
     // Update track object with new price before sending email
     const previousPrice = track.curr_price;
     track.curr_price = match;
-    await sendPriceUpdateEmail(track);
+    const emailDurationMs = await sendPriceUpdateEmail(track);
     return {
       status: priceDirection === 'lower' ? 'updated_lower' : priceDirection === 'higher' ? 'updated_higher' : 'updated_other',
       stage: 'find-price',
@@ -541,7 +575,8 @@ async function handleMatchedPrice(match, track) {
       markedInactive: false,
       reactivated: false,
       failureLogId: null,
-      errorMessage: null
+      errorMessage: null,
+      emailDurationMs
     };
   }
 
@@ -762,7 +797,7 @@ async function setTrackAsInactive(track) {
     id: track.id,
     productName: track.product_name
   });
-  await sendTrackInactiveEmail(track);
+  return sendTrackInactiveEmail(track);
 }
 
 async function setTrackAsActive(track) {
@@ -812,7 +847,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
 
   let tracks = [];
   const jsonLdProduct = extractProductDataFromJsonLd(html);
-  if (jsonLdProduct && jsonLdProduct.price === trackRequest.orig_price) {
+  if (jsonLdProduct && isValidMatchedPrice(jsonLdProduct.price) && jsonLdProduct.price === trackRequest.orig_price) {
     console.info('[crawler] Found original price in JSON-LD product schema', {
       url: trackRequest.price_url,
       price: jsonLdProduct.price
@@ -1004,79 +1039,323 @@ async function updatePrice(newPrice, track) {
   );
 }
 
-async function sendEmail(email) {
-  const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
+async function queueEmail(email) {
+  const startedAt = Date.now();
+  email.delivered = false;
   email.status = 'pending';
   email.error_message = null;
   email.sent_at = null;
+  email.attempt_count = 0;
+  email.last_attempt_at = null;
+  await insertEmail(email);
+  return Date.now() - startedAt;
+}
 
-  if (sendEmailsEnabled) {
-    try {
-      const emailService = await getAppConfig('email.service', keys.email && keys.email.service);
-      const emailAddress = await getAppConfig('email.address', keys.email && keys.email.address);
-      const emailPassword = await getAppConfig('email.password', keys.email && keys.email.password);
-
-      if (!emailService || !emailAddress || !emailPassword) {
-        email.status = 'skipped_missing_config';
-        email.error_message = 'Email configuration is incomplete. Expected email.service, email.address and email.password.';
-        console.error('[crawler] Skipping email send because configuration is incomplete', {
-          trackId: email.track_id,
-          recipient: email.email,
-          hasService: Boolean(emailService),
-          hasAddress: Boolean(emailAddress),
-          hasPassword: Boolean(emailPassword)
-        });
-        await insertEmail(email);
-        return;
-      }
-
-      // Create a transporter
-      const transporter = nodemailer.createTransport({
-        service: emailService,
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-        socketTimeout: 20000,
-        auth: {
-          user: emailAddress, 
-          pass: emailPassword,   // App password or your email password
-        },
-      });
-
-      // Email options
-      const mailOptions = {
-        from: emailAddress, // Sender email
-        to: email.email,          // Recipient email
-        subject: email.subject,   // Email subject
-        text: email.body,         // Plain text message
-      };
-
-      // Send the email
-      const info = await transporter.sendMail(mailOptions);
-      
-      // Email sent successfully
-      email.delivered = true;
-      email.status = 'sent';
-      email.sent_at = new Date();
-      console.info('[crawler] Email sent', {
-        trackId: email.track_id,
-        recipient: email.email,
-        response: info.response
-      });
-    } catch (error) {
-      console.error('[crawler] Failed to send email', {
-        trackId: email.track_id,
-        recipient: email.email,
-        subject: email.subject,
-        error
-      });
-      email.status = 'failed';
-      email.error_message = error.message;
-    }
-  } else {
-    email.status = 'skipped_disabled';
+async function deliverPendingEmails() {
+  const pendingEmails = await getPendingEmailLogs();
+  if (pendingEmails.length === 0) {
+    return {
+      pendingCount: 0,
+      sentCount: 0,
+      undeliverableCount: 0,
+      skippedCount: 0
+    };
   }
 
-  await insertEmail(email);
+  const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
+  if (!sendEmailsEnabled) {
+    await batchUpdateEmailLogs(pendingEmails.map((email) => email.id), {
+      status: 'skipped_disabled',
+      errorMessage: 'Email sending is disabled.',
+      delivered: false,
+      sentAt: null,
+      lastAttemptAt: null
+    });
+    console.info('[crawler] Pending email delivery skipped because email sending is disabled', {
+      pendingCount: pendingEmails.length
+    });
+    return {
+      pendingCount: pendingEmails.length,
+      sentCount: 0,
+      undeliverableCount: 0,
+      skippedCount: pendingEmails.length
+    };
+  }
+
+  const configuredTransportMode = await getEmailTransportMode();
+  let deliveryContext = null;
+
+  try {
+    deliveryContext = await createEmailTransport({ transportMode: configuredTransportMode });
+  } catch (error) {
+    if (error && error.code === 'EMAIL_CONFIG_MISSING') {
+      await batchUpdateEmailLogs(pendingEmails.map((email) => email.id), {
+        status: 'skipped_missing_config',
+        errorMessage: error.message,
+        delivered: false,
+        sentAt: null,
+        lastAttemptAt: null
+      });
+      console.error('[crawler] Pending email delivery skipped because configuration is incomplete', {
+        pendingCount: pendingEmails.length,
+        transportMode: configuredTransportMode,
+        ...(error.details || {})
+      });
+      return {
+        pendingCount: pendingEmails.length,
+        sentCount: 0,
+        undeliverableCount: 0,
+        skippedCount: pendingEmails.length
+      };
+    }
+
+    throw error;
+  }
+
+  const summary = {
+    pendingCount: pendingEmails.length,
+    sentCount: 0,
+    undeliverableCount: 0,
+    skippedCount: 0
+  };
+
+  for (const pendingEmail of pendingEmails) {
+    const deliveryResult = await deliverPendingEmail(pendingEmail, deliveryContext);
+
+    if (deliveryResult.status === 'sent') {
+      summary.sentCount += 1;
+    } else if (deliveryResult.status === 'undeliverable') {
+      summary.undeliverableCount += 1;
+    } else {
+      summary.skippedCount += 1;
+    }
+  }
+
+  console.info('[crawler] Pending email delivery finished', summary);
+  return summary;
+}
+
+async function deliverPendingEmail(emailLog, deliveryContext) {
+  let attemptCount = Number(emailLog.attempt_count) || 0;
+
+  if (attemptCount >= MAX_EMAIL_DELIVERY_ATTEMPTS) {
+    await updateEmailLog(emailLog.id, {
+      status: 'undeliverable',
+      errorMessage: emailLog.error_message || `Failed to deliver after ${MAX_EMAIL_DELIVERY_ATTEMPTS} attempts.`,
+      delivered: false,
+      sentAt: null,
+      attemptCount,
+      lastAttemptAt: emailLog.last_attempt_at || new Date()
+    });
+    return { status: 'undeliverable' };
+  }
+
+  while (attemptCount < MAX_EMAIL_DELIVERY_ATTEMPTS) {
+    attemptCount += 1;
+    const attemptedAt = new Date();
+
+    try {
+      const info = await sendQueuedEmailWithContext(emailLog, deliveryContext);
+
+      await updateEmailLog(emailLog.id, {
+        status: 'sent',
+        errorMessage: null,
+        delivered: true,
+        sentAt: new Date(),
+        attemptCount,
+        lastAttemptAt: attemptedAt
+      });
+
+      console.info('[crawler] Email sent', {
+        emailLogId: emailLog.id,
+        trackId: emailLog.track_id,
+        recipient: emailLog.email,
+        transportMode: deliveryContext.transportMode,
+        attemptCount,
+        response: info.response || info.messageId || null
+      });
+
+      return { status: 'sent' };
+    } catch (error) {
+      const hasAttemptsRemaining = attemptCount < MAX_EMAIL_DELIVERY_ATTEMPTS;
+      const status = hasAttemptsRemaining ? 'pending' : 'undeliverable';
+
+      await updateEmailLog(emailLog.id, {
+        status,
+        errorMessage: error.message,
+        delivered: false,
+        sentAt: null,
+        attemptCount,
+        lastAttemptAt: attemptedAt
+      });
+
+      console.error('[crawler] Failed to deliver queued email', {
+        emailLogId: emailLog.id,
+        trackId: emailLog.track_id,
+        recipient: emailLog.email,
+        transportMode: deliveryContext.transportMode,
+        attemptCount,
+        status,
+        error
+      });
+
+      if (!hasAttemptsRemaining) {
+        return { status: 'undeliverable' };
+      }
+    }
+  }
+
+  return { status: 'undeliverable' };
+}
+
+async function sendQueuedEmailWithContext(emailLog, deliveryContext) {
+  if (deliveryContext.transportMode === 'ses') {
+    const command = new SendEmailCommand({
+      FromEmailAddress: deliveryContext.senderAddress,
+      Destination: {
+        ToAddresses: [emailLog.email]
+      },
+      Content: {
+        Simple: {
+          Subject: {
+            Data: emailLog.subject || '',
+            Charset: 'UTF-8'
+          },
+          Body: {
+            Text: {
+              Data: emailLog.body || '',
+              Charset: 'UTF-8'
+            }
+          }
+        }
+      }
+    });
+
+    const response = await deliveryContext.sesClient.send(command);
+    return {
+      messageId: response.MessageId || null,
+      response: response.MessageId || null
+    };
+  }
+
+  return deliveryContext.transporter.sendMail({
+    from: deliveryContext.senderAddress,
+    to: emailLog.email,
+    subject: emailLog.subject,
+    text: emailLog.body
+  });
+}
+
+async function createEmailTransport({ emailAddress, transportMode = null }) {
+  const resolvedTransportMode = transportMode || await getEmailTransportMode();
+  const resolvedEmailAddress = resolvedTransportMode === 'ses'
+    ? await getAppConfig('email.ses_address', constants.email.sesAddress)
+    : (emailAddress || await getAppConfig('email.address', keys.email && keys.email.address));
+
+  if (!resolvedEmailAddress) {
+    throw createMissingEmailConfigError(
+      resolvedTransportMode === 'ses'
+        ? 'Email configuration is incomplete. Expected email.ses_address for outgoing SES mail.'
+        : 'Email configuration is incomplete. Expected email.address for outgoing mail.',
+      {
+        transportMode: resolvedTransportMode,
+        hasAddress: Boolean(resolvedEmailAddress)
+      }
+    );
+  }
+
+  if (resolvedTransportMode === 'ses') {
+    const awsConfig = getAwsMailConfig();
+
+    if (!awsConfig.accessKeyId || !awsConfig.secretAccessKey || !awsConfig.region) {
+      throw createMissingEmailConfigError(
+        'Email configuration is incomplete for SES. Expected aws access key, secret access key and region.',
+        {
+          transportMode: resolvedTransportMode,
+          hasAccessKeyId: Boolean(awsConfig.accessKeyId),
+          hasSecretAccessKey: Boolean(awsConfig.secretAccessKey),
+          hasRegion: Boolean(awsConfig.region)
+        }
+      );
+    }
+
+    const sesClient = new SESv2Client({
+      region: awsConfig.region,
+      credentials: {
+        accessKeyId: awsConfig.accessKeyId,
+        secretAccessKey: awsConfig.secretAccessKey
+      }
+    });
+
+    return {
+      senderAddress: resolvedEmailAddress,
+      transportMode: resolvedTransportMode,
+      sesClient
+    };
+  }
+
+  const emailService = await getAppConfig('email.service', keys.email && keys.email.service);
+  const emailPassword = await getAppConfig('email.password', keys.email && keys.email.password);
+
+  if (!emailService || !emailPassword) {
+    throw createMissingEmailConfigError(
+      'Email configuration is incomplete for SMTP. Expected email.service, email.address and email.password.',
+      {
+        transportMode: resolvedTransportMode,
+        hasService: Boolean(emailService),
+        hasAddress: Boolean(resolvedEmailAddress),
+        hasPassword: Boolean(emailPassword)
+      }
+    );
+  }
+
+  return {
+    senderAddress: resolvedEmailAddress,
+    transportMode: resolvedTransportMode,
+    transporter: nodemailer.createTransport({
+      service: emailService,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+      auth: {
+        user: resolvedEmailAddress,
+        pass: emailPassword
+      }
+    })
+  };
+}
+
+async function getEmailTransportMode() {
+  const configuredTransportMode = await getAppConfig(
+    'email.transport_mode',
+    constants.email.transportMode
+  );
+  return normalizeEmailTransportMode(configuredTransportMode);
+}
+
+function normalizeEmailTransportMode(value) {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  if (normalizedValue === 'ses') {
+    return 'ses';
+  }
+
+  return 'smtp';
+}
+
+function createMissingEmailConfigError(message, details) {
+  const error = new Error(message);
+  error.code = 'EMAIL_CONFIG_MISSING';
+  error.details = details;
+  return error;
+}
+
+function getAwsMailConfig() {
+  const awsConfig = keys.aws || {};
+  return {
+    accessKeyId: awsConfig.AWS_ACCESS_KEY_ID || awsConfig.accessKeyId || process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: awsConfig.AWS_SECRET_ACCESS_KEY || awsConfig.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '',
+    region: awsConfig.AWS_REGION || awsConfig.region || process.env.AWS_REGION || ''
+  };
 }
 
 async function sendPriceUpdateEmail(track) {
@@ -1092,7 +1371,7 @@ async function sendPriceUpdateEmail(track) {
     subject: `Price change: ${track.product_name}`,
     body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}. View product here: ${track.price_url}`
   };
-  await sendEmail(email);
+  return queueEmail(email);
 }
 
 async function sendTrackInactiveEmail(track) {
@@ -1108,7 +1387,7 @@ async function sendTrackInactiveEmail(track) {
     subject: `Tracking paused: ${track.product_name}`,
     body: `Tracking for "${track.product_name}" has been paused because the price could not be checked successfully. Original price was ${track.orig_price}. Please review the product page here: ${track.price_url}`
   };
-  await sendEmail(email);
+  return queueEmail(email);
 }
 
 let emailLogTableReadyPromise = null;
@@ -1140,6 +1419,8 @@ async function ensureEmailLogTableColumns() {
       "error_message" text,
       "delivered" boolean,
       "sent_at" timestamp,
+      "attempt_count" integer NOT NULL DEFAULT 0,
+      "last_attempt_at" timestamp,
       "created_at" timestamp
     )
   `);
@@ -1158,6 +1439,8 @@ async function ensureEmailLogTableColumns() {
       ADD COLUMN IF NOT EXISTS error_message text,
       ADD COLUMN IF NOT EXISTS delivered boolean,
       ADD COLUMN IF NOT EXISTS sent_at timestamp,
+      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_attempt_at timestamp,
       ADD COLUMN IF NOT EXISTS created_at timestamp
   `);
 }
@@ -1180,10 +1463,12 @@ async function insertEmail(email) {
         error_message,
         delivered,
         sent_at,
+        attempt_count,
+        last_attempt_at,
         created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       RETURNING *`,
       [
         email.track_id,
         email.product_name,
@@ -1197,21 +1482,99 @@ async function insertEmail(email) {
         email.error_message || null,
         email.delivered,
         email.sent_at || null,
+        Number.isFinite(email.attempt_count) ? email.attempt_count : 0,
+        email.last_attempt_at || null,
         email.created_at,
       ]
     );
 
     console.info('[crawler] Email log inserted', {
       emailLogId: result.rows[0].id,
-      trackId: email.track_id
+      trackId: email.track_id,
+      status: result.rows[0].status
     });
+    return result.rows[0];
   } catch (error) {
     console.error('[crawler] Failed to insert email log', {
       trackId: email.track_id,
       recipient: email.email,
       error
     });
+    return null;
   }
+}
+
+async function getPendingEmailLogs() {
+  await ensureEmailLogTable();
+  const result = await query(
+    `SELECT *
+     FROM email_logs
+     WHERE status = 'pending'
+     ORDER BY created_at ASC NULLS LAST, id ASC`
+  );
+
+  return result.rows;
+}
+
+async function updateEmailLog(emailLogId, {
+  status,
+  errorMessage = null,
+  delivered = false,
+  sentAt = null,
+  attemptCount = 0,
+  lastAttemptAt = null
+}) {
+  await ensureEmailLogTable();
+  await query(
+    `UPDATE email_logs
+     SET status = $2,
+         error_message = $3,
+         delivered = $4,
+         sent_at = $5,
+         attempt_count = $6,
+         last_attempt_at = $7
+     WHERE id = $1`,
+    [
+      emailLogId,
+      status,
+      errorMessage,
+      delivered,
+      sentAt,
+      attemptCount,
+      lastAttemptAt
+    ]
+  );
+}
+
+async function batchUpdateEmailLogs(emailLogIds, {
+  status,
+  errorMessage = null,
+  delivered = false,
+  sentAt = null,
+  lastAttemptAt = null
+}) {
+  if (!emailLogIds || emailLogIds.length === 0) {
+    return;
+  }
+
+  await ensureEmailLogTable();
+  await query(
+    `UPDATE email_logs
+     SET status = $2,
+         error_message = $3,
+         delivered = $4,
+         sent_at = $5,
+         last_attempt_at = $6
+     WHERE id = ANY($1::int[])`,
+    [
+      emailLogIds,
+      status,
+      errorMessage,
+      delivered,
+      sentAt,
+      lastAttemptAt
+    ]
+  );
 }
 
 function extractNumber(price) {
@@ -1224,6 +1587,10 @@ function escapeRegex(string) {
 
 function isNumeric(value) {
   return /^\d+$/.test(value);
+}
+
+function isValidMatchedPrice(value) {
+  return isNumeric(value) && value.length <= 20 && Number(value) <= MAX_MATCH_PRICE;
 }
 
 async function shouldSaveHtml(action, failedOnly) {
@@ -1365,7 +1732,7 @@ async function processTrackUpdate(track, runId) {
     });
   }
 
-  itemResult.durationMs = Date.now() - startedAt;
+  itemResult.durationMs = Math.max(0, Date.now() - startedAt - (itemResult.emailDurationMs || 0));
   return itemResult;
 }
 
@@ -1390,9 +1757,12 @@ async function handleUnexpectedTrackError(track, runId, error, existingResult = 
 
   let markedInactive = false;
   try {
-    await setTrackAsInactive(track);
+    const inactiveEmailDurationMs = await setTrackAsInactive(track);
     track.active = false;
     markedInactive = true;
+    if (existingResult) {
+      existingResult.emailDurationMs = inactiveEmailDurationMs;
+    }
   } catch (inactiveError) {
     console.error('[crawler] Failed to mark track inactive after unexpected error', {
       runId,
@@ -1411,7 +1781,8 @@ async function handleUnexpectedTrackError(track, runId, error, existingResult = 
     markedInactive,
     reactivated: false,
     failureLogId,
-    errorMessage: error && error.message ? error.message : 'Unexpected crawler error'
+    errorMessage: error && error.message ? error.message : 'Unexpected crawler error',
+    emailDurationMs: existingResult && existingResult.emailDurationMs ? existingResult.emailDurationMs : 0
   };
 }
 
@@ -1448,7 +1819,8 @@ function createRunItemResult(track) {
     reactivated: false,
     failureLogId: null,
     errorMessage: null,
-    durationMs: 0
+    durationMs: 0,
+    emailDurationMs: 0
   };
 }
 

@@ -38,6 +38,22 @@ const defaultAppConfig = [
     value_help: 'Checkbox. When disabled, email logs are still recorded but messages are not sent.'
   },
   {
+    config_key: 'email.transport_mode',
+    category: 'email',
+    value: constants.email.transportMode,
+    data_type: 'string',
+    description: 'Controls whether outgoing mail uses SMTP or Amazon SES.',
+    value_help: 'Allowed values: smtp, ses. Defaults to smtp outside production and ses in production.'
+  },
+  {
+    config_key: 'email.ses_address',
+    category: 'email',
+    value: constants.email.sesAddress,
+    data_type: 'string',
+    description: 'The sender email address used when outgoing mail is sent through Amazon SES.',
+    value_help: 'Text value. Example: pricewatcher@birgirs.com.'
+  },
+  {
     config_key: 'email.service',
     category: 'email',
     value: (keys.email && keys.email.service) || '',

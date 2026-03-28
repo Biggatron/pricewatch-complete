@@ -49,14 +49,19 @@ const adminCheck = (req, res, next) => {
 
 router.get('/', authCheck, adminCheck, async (req, res, next) => {
   try {
+    const activeTab = getActiveAdminTab(req.query.tab);
+    const trackFilters = getTrackAdminFilters(req.query);
+    const failedTrackFilters = getFailedTrackLogFilters(req.query);
+    const emailFilters = getEmailLogFilters(req.query);
+
     const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs] = await Promise.all([
       readRecentLogs(),
       getRecentCrawlerFailureLogs(),
       getRecentCrawlerRuns(),
-      getAllTracksForAdmin(),
+      getAllTracksForAdmin(trackFilters),
       getAllAppConfig(),
-      getRecentFailedTrackLogs(),
-      getRecentEmailLogs()
+      getRecentFailedTrackLogs(failedTrackFilters),
+      getRecentEmailLogs(emailFilters)
     ]);
 
     res.render('admin', {
@@ -69,7 +74,10 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       appConfigs,
       recentFailedTrackLogs,
       recentEmailLogs,
-      activeTab: getActiveAdminTab(req.query.tab),
+      trackFilters,
+      failedTrackFilters,
+      emailFilters,
+      activeTab,
       logFilePath: getLogFilePath(),
       accessDenied: false
     });
@@ -86,6 +94,23 @@ router.post('/logs/clear', authCheck, adminCheck, async (req, res, next) => {
       adminEmail: req.user.email
     });
     res.status(200).json({ message: 'Log file cleared' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/emails/send-pending', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const summary = await crawler.deliverPendingEmails();
+    console.info('[admin] Pending emails processed', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email,
+      ...summary
+    });
+    res.status(200).json({
+      message: 'Pending emails processed',
+      summary
+    });
   } catch (error) {
     next(error);
   }
@@ -261,7 +286,27 @@ router.get('/runs/:id', authCheck, adminCheck, async (req, res, next) => {
 
 module.exports = router;
 
-async function getAllTracksForAdmin() {
+async function getAllTracksForAdmin(filters = getTrackAdminFilters()) {
+  const conditions = [];
+  const params = [];
+
+  if (filters.search) {
+    params.push(buildLikePattern(filters.search));
+    const patternParam = `$${params.length}`;
+    conditions.push(`(
+      track.product_name ILIKE ${patternParam} ESCAPE '\\'
+      OR track.price_url ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(track.email, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(user_account.name, '') ILIKE ${patternParam} ESCAPE '\\'
+    )`);
+  }
+
+  if (filters.active === 'active' || filters.active === 'inactive') {
+    params.push(filters.active === 'active');
+    conditions.push(`track.active = $${params.length}`);
+  }
+
+  params.push(filters.maxRows);
   const result = await query(
     `SELECT
        track.id,
@@ -276,7 +321,10 @@ async function getAllTracksForAdmin() {
        user_account.name AS user_name
      FROM track
      LEFT JOIN user_account ON user_account.id = track.user_id
-     ORDER BY track.last_modified_at DESC, track.id DESC`
+     ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY ${getTrackSortClause(filters.sort)}
+     LIMIT $${params.length}`,
+    params
   );
 
   return result.rows;
@@ -296,25 +344,69 @@ async function getTrackById(trackId) {
   return result.rows[0] || null;
 }
 
-async function getRecentFailedTrackLogs(limit = 1000) {
+async function getRecentFailedTrackLogs(filters = getFailedTrackLogFilters()) {
+  const conditions = [];
+  const params = [];
+
+  if (filters.search) {
+    params.push(buildLikePattern(filters.search));
+    const patternParam = `$${params.length}`;
+    conditions.push(`(
+      COALESCE(domain, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(product_url, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(product_price, '') ILIKE ${patternParam} ESCAPE '\\'
+    )`);
+  }
+
+  params.push(filters.maxRows);
   const result = await query(
     `SELECT *
      FROM failed_track_logs
-     ORDER BY created_at DESC, id DESC
-     LIMIT $1`,
-    [limit]
+     ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY ${getFailedTrackSortClause(filters.sort)}
+     LIMIT $${params.length}`,
+    params
   );
 
   return result.rows;
 }
 
-async function getRecentEmailLogs(limit = 1000) {
+async function getRecentEmailLogs(filters = getEmailLogFilters()) {
+  const conditions = [];
+  const params = [];
+  const effectiveStatusExpression = `COALESCE(status, CASE WHEN delivered THEN 'sent' ELSE 'pending' END)`;
+
+  if (filters.search) {
+    params.push(buildLikePattern(filters.search));
+    const patternParam = `$${params.length}`;
+    conditions.push(`(
+      COALESCE(product_name, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(email, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(subject, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(error_message, '') ILIKE ${patternParam} ESCAPE '\\'
+    )`);
+  }
+
+  if (filters.status !== 'all') {
+    params.push(filters.status);
+    conditions.push(`${effectiveStatusExpression} = $${params.length}`);
+  }
+
+  if (filters.emailType !== 'all') {
+    params.push(filters.emailType);
+    conditions.push(`email_type = $${params.length}`);
+  }
+
+  params.push(filters.maxRows);
   const result = await query(
-    `SELECT *
+    `SELECT
+       *,
+       ${effectiveStatusExpression} AS effective_status
      FROM email_logs
-     ORDER BY created_at DESC, id DESC
-     LIMIT $1`,
-    [limit]
+     ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY ${getEmailSortClause(filters.sort, effectiveStatusExpression)}
+     LIMIT $${params.length}`,
+    params
   );
 
   return result.rows;
@@ -356,6 +448,121 @@ function normalizeConfigValue(value, dataType) {
 }
 
 function getActiveAdminTab(tab) {
-  const allowedTabs = new Set(['overview', 'tracks', 'config', 'logs']);
+  const allowedTabs = new Set([
+    'overview',
+    'tracks',
+    'config',
+    'service-logs',
+    'failed-tracks',
+    'emails'
+  ]);
   return allowedTabs.has(tab) ? tab : 'overview';
+}
+
+function getTrackAdminFilters(queryParams = {}) {
+  return {
+    search: String(queryParams.track_search || '').trim(),
+    active: normalizeSelectValue(queryParams.track_active, ['all', 'active', 'inactive'], 'all'),
+    sort: normalizeSelectValue(
+      queryParams.track_sort,
+      ['modified_desc', 'modified_asc', 'product_asc', 'product_desc', 'curr_price_desc', 'curr_price_asc', 'user_asc', 'user_desc'],
+      'modified_desc'
+    ),
+    maxRows: parseMaxRows(queryParams.track_max_rows, 50)
+  };
+}
+
+function getFailedTrackLogFilters(queryParams = {}) {
+  return {
+    search: String(queryParams.failed_search || '').trim(),
+    sort: normalizeSelectValue(
+      queryParams.failed_sort,
+      ['created_desc', 'created_asc', 'domain_asc', 'domain_desc', 'price_desc', 'price_asc'],
+      'created_desc'
+    ),
+    maxRows: parseMaxRows(queryParams.failed_max_rows, 50)
+  };
+}
+
+function getEmailLogFilters(queryParams = {}) {
+  return {
+    search: String(queryParams.email_search || '').trim(),
+    status: normalizeSelectValue(
+      queryParams.email_status,
+      ['all', 'pending', 'sent', 'undeliverable', 'skipped_disabled', 'skipped_missing_config'],
+      'all'
+    ),
+    emailType: normalizeSelectValue(
+      queryParams.email_type,
+      ['all', 'price_change', 'track_inactive', 'generic'],
+      'all'
+    ),
+    sort: normalizeSelectValue(
+      queryParams.email_sort,
+      ['created_desc', 'created_asc', 'status_asc', 'status_desc', 'attempts_desc', 'attempts_asc', 'email_asc', 'email_desc'],
+      'created_desc'
+    ),
+    maxRows: parseMaxRows(queryParams.email_max_rows, 50)
+  };
+}
+
+function parseMaxRows(value, fallbackValue) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallbackValue;
+  }
+
+  return Math.min(Math.max(parsed, 1), 500);
+}
+
+function normalizeSelectValue(value, allowedValues, fallbackValue) {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  return allowedValues.includes(normalizedValue) ? normalizedValue : fallbackValue;
+}
+
+function buildLikePattern(value) {
+  return `%${String(value).replace(/[\\%_]/g, '\\$&')}%`;
+}
+
+function getTrackSortClause(sort) {
+  const trackSortMap = {
+    modified_desc: 'track.last_modified_at DESC NULLS LAST, track.id DESC',
+    modified_asc: 'track.last_modified_at ASC NULLS LAST, track.id ASC',
+    product_asc: 'track.product_name ASC NULLS LAST, track.id DESC',
+    product_desc: 'track.product_name DESC NULLS LAST, track.id DESC',
+    curr_price_desc: 'track.curr_price DESC NULLS LAST, track.id DESC',
+    curr_price_asc: 'track.curr_price ASC NULLS LAST, track.id DESC',
+    user_asc: 'user_account.name ASC NULLS LAST, track.id DESC',
+    user_desc: 'user_account.name DESC NULLS LAST, track.id DESC'
+  };
+
+  return trackSortMap[sort] || trackSortMap.modified_desc;
+}
+
+function getFailedTrackSortClause(sort) {
+  const failedTrackSortMap = {
+    created_desc: 'created_at DESC NULLS LAST, id DESC',
+    created_asc: 'created_at ASC NULLS LAST, id ASC',
+    domain_asc: 'domain ASC NULLS LAST, id DESC',
+    domain_desc: 'domain DESC NULLS LAST, id DESC',
+    price_desc: 'product_price DESC NULLS LAST, id DESC',
+    price_asc: 'product_price ASC NULLS LAST, id DESC'
+  };
+
+  return failedTrackSortMap[sort] || failedTrackSortMap.created_desc;
+}
+
+function getEmailSortClause(sort, effectiveStatusExpression = 'status') {
+  const emailSortMap = {
+    created_desc: 'created_at DESC NULLS LAST, id DESC',
+    created_asc: 'created_at ASC NULLS LAST, id ASC',
+    status_asc: `${effectiveStatusExpression} ASC NULLS LAST, id DESC`,
+    status_desc: `${effectiveStatusExpression} DESC NULLS LAST, id DESC`,
+    attempts_desc: 'attempt_count DESC NULLS LAST, id DESC',
+    attempts_asc: 'attempt_count ASC NULLS LAST, id DESC',
+    email_asc: 'email ASC NULLS LAST, id DESC',
+    email_desc: 'email DESC NULLS LAST, id DESC'
+  };
+
+  return emailSortMap[sort] || emailSortMap.created_desc;
 }

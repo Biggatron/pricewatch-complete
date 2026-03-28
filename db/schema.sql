@@ -40,6 +40,8 @@ CREATE TABLE email_logs (
     "error_message" text,
     "delivered" boolean,
     "sent_at" timestamp,
+    "attempt_count" integer NOT NULL DEFAULT 0,
+    "last_attempt_at" timestamp,
     "created_at" timestamp
 );
 

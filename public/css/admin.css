@@ -144,6 +144,32 @@
   gap: 0.75rem;
 }
 
+.admin-filter-form {
+  align-items: end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 1rem 0;
+}
+
+.admin-filter-form label {
+  display: block;
+}
+
+.admin-filter-form label span {
+  color: #555;
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+}
+
+.admin-filter-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  min-height: 100%;
+}
+
 .admin-input {
   box-sizing: border-box;
   padding: 0.45rem;
@@ -270,6 +296,19 @@
   position: absolute;
 }
 
+.admin-panel-fill {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 230px);
+}
+
+.admin-service-log-viewer {
+  flex: 1 1 auto;
+  margin-top: 1rem;
+  max-height: none;
+  min-height: calc(100vh - 360px);
+}
+
 @media (max-width: 700px) {
   .admin-action-group-wrap {
     flex-wrap: wrap;
@@ -288,5 +327,13 @@
   .admin-panel {
     margin-left: 0.5rem;
     margin-right: 0.5rem;
+  }
+
+  .admin-panel-fill {
+    min-height: calc(100vh - 190px);
+  }
+
+  .admin-service-log-viewer {
+    min-height: calc(100vh - 310px);
   }
 }

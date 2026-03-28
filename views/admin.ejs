@@ -28,7 +28,9 @@
         <button class="admin-tab-button <%= activeTab === 'overview' ? 'is-active' : '' %>" type="button" data-tab-target="overview" role="tab" aria-selected="<%= activeTab === 'overview' ? 'true' : 'false' %>">Overview</button>
         <button class="admin-tab-button <%= activeTab === 'tracks' ? 'is-active' : '' %>" type="button" data-tab-target="tracks" role="tab" aria-selected="<%= activeTab === 'tracks' ? 'true' : 'false' %>">Track Manager</button>
         <button class="admin-tab-button <%= activeTab === 'config' ? 'is-active' : '' %>" type="button" data-tab-target="config" role="tab" aria-selected="<%= activeTab === 'config' ? 'true' : 'false' %>">Config</button>
-        <button class="admin-tab-button <%= activeTab === 'logs' ? 'is-active' : '' %>" type="button" data-tab-target="logs" role="tab" aria-selected="<%= activeTab === 'logs' ? 'true' : 'false' %>">Logs</button>
+        <button class="admin-tab-button <%= activeTab === 'service-logs' ? 'is-active' : '' %>" type="button" data-tab-target="service-logs" role="tab" aria-selected="<%= activeTab === 'service-logs' ? 'true' : 'false' %>">Service Logs</button>
+        <button class="admin-tab-button <%= activeTab === 'failed-tracks' ? 'is-active' : '' %>" type="button" data-tab-target="failed-tracks" role="tab" aria-selected="<%= activeTab === 'failed-tracks' ? 'true' : 'false' %>">Failed Tracks</button>
+        <button class="admin-tab-button <%= activeTab === 'emails' ? 'is-active' : '' %>" type="button" data-tab-target="emails" role="tab" aria-selected="<%= activeTab === 'emails' ? 'true' : 'false' %>">Emails</button>
       </div>
 
       <section class="admin-tab-panel <%= activeTab === 'overview' ? 'is-active' : '' %>" data-tab-panel="overview">
@@ -36,6 +38,7 @@
           <h2 class="admin-section-title">Actions</h2>
           <div class="admin-inline-actions">
             <button class="btn" onclick="updateTracks()">Update tracks</button>
+            <button class="btn" onclick="sendPendingEmails()">Send pending emails</button>
             <button class="btn admin-cancel-btn" onclick="clearRecentLogFile()">Clear recent log file</button>
           </div>
         </div>
@@ -176,6 +179,42 @@
       <section class="admin-tab-panel <%= activeTab === 'tracks' ? 'is-active' : '' %>" data-tab-panel="tracks">
         <div class="admin-panel">
           <h2 class="admin-section-title">Track manager</h2>
+          <form class="admin-filter-form" method="GET" action="/admin">
+            <input type="hidden" name="tab" value="tracks">
+            <label>
+              <span>Search</span>
+              <input class="admin-input" type="text" name="track_search" value="<%= trackFilters.search %>" placeholder="Product, URL, user or email">
+            </label>
+            <label>
+              <span>Active</span>
+              <select class="admin-input" name="track_active">
+                <option value="all" <%= trackFilters.active === 'all' ? 'selected' : '' %>>All</option>
+                <option value="active" <%= trackFilters.active === 'active' ? 'selected' : '' %>>Active</option>
+                <option value="inactive" <%= trackFilters.active === 'inactive' ? 'selected' : '' %>>Inactive</option>
+              </select>
+            </label>
+            <label>
+              <span>Sort</span>
+              <select class="admin-input" name="track_sort">
+                <option value="modified_desc" <%= trackFilters.sort === 'modified_desc' ? 'selected' : '' %>>Recently changed</option>
+                <option value="modified_asc" <%= trackFilters.sort === 'modified_asc' ? 'selected' : '' %>>Oldest change first</option>
+                <option value="product_asc" <%= trackFilters.sort === 'product_asc' ? 'selected' : '' %>>Product A-Z</option>
+                <option value="product_desc" <%= trackFilters.sort === 'product_desc' ? 'selected' : '' %>>Product Z-A</option>
+                <option value="curr_price_desc" <%= trackFilters.sort === 'curr_price_desc' ? 'selected' : '' %>>Current price high-low</option>
+                <option value="curr_price_asc" <%= trackFilters.sort === 'curr_price_asc' ? 'selected' : '' %>>Current price low-high</option>
+                <option value="user_asc" <%= trackFilters.sort === 'user_asc' ? 'selected' : '' %>>User A-Z</option>
+                <option value="user_desc" <%= trackFilters.sort === 'user_desc' ? 'selected' : '' %>>User Z-A</option>
+              </select>
+            </label>
+            <label>
+              <span>Max rows</span>
+              <input class="admin-input" type="number" name="track_max_rows" min="1" max="500" value="<%= trackFilters.maxRows %>">
+            </label>
+            <div class="admin-filter-actions">
+              <button class="btn btn-small" type="submit">Apply</button>
+              <a class="btn btn-small admin-cancel-btn admin-link-button" href="/admin?tab=tracks">Reset</a>
+            </div>
+          </form>
           <% if (!tracks || tracks.length === 0) { %>
             <p>No tracks found.</p>
           <% } else { %>
@@ -297,6 +336,11 @@
                               <%= config.parsed_value ? 'checked' : '' %>>
                             <span><%= config.parsed_value ? 'Enabled' : 'Disabled' %></span>
                           </label>
+                        <% } else if (config.config_key === 'email.transport_mode') { %>
+                          <select class="admin-input" data-config-field="value">
+                            <option value="smtp" <%= config.value === 'smtp' ? 'selected' : '' %>>SMTP</option>
+                            <option value="ses" <%= config.value === 'ses' ? 'selected' : '' %>>Amazon SES</option>
+                          </select>
                         <% } else { %>
                           <input
                             class="admin-input"
@@ -318,20 +362,51 @@
         </div>
       </section>
 
-      <section class="admin-tab-panel <%= activeTab === 'logs' ? 'is-active' : '' %>" data-tab-panel="logs">
-        <div class="admin-panel">
+      <section class="admin-tab-panel <%= activeTab === 'service-logs' ? 'is-active' : '' %>" data-tab-panel="service-logs">
+        <div class="admin-panel admin-panel-fill">
           <h2 class="admin-section-title">Recent logs</h2>
           <p class="admin-subtitle">Service logs from <%= logFilePath %></p>
+          <div class="admin-inline-actions">
+            <button class="btn admin-cancel-btn" onclick="clearRecentLogFile()">Clear recent log file</button>
+          </div>
           <% if (!logs || logs.length === 0) { %>
             <p>No logs have been written yet.</p>
           <% } else { %>
-            <pre class="log-viewer"><%= logs.join('\n') %></pre>
+            <pre class="log-viewer admin-service-log-viewer" id="service-log-viewer"><%= logs.join('\n') %></pre>
           <% } %>
         </div>
+      </section>
 
+      <section class="admin-tab-panel <%= activeTab === 'failed-tracks' ? 'is-active' : '' %>" data-tab-panel="failed-tracks">
         <div class="admin-panel">
           <h2 class="admin-section-title">Failed track logs</h2>
-          <p class="admin-subtitle">Newest 1000 entries from <code>failed_track_logs</code></p>
+          <p class="admin-subtitle">Filtered rows from <code>failed_track_logs</code></p>
+          <form class="admin-filter-form" method="GET" action="/admin">
+            <input type="hidden" name="tab" value="failed-tracks">
+            <label>
+              <span>Search</span>
+              <input class="admin-input" type="text" name="failed_search" value="<%= failedTrackFilters.search %>" placeholder="Domain, URL or price">
+            </label>
+            <label>
+              <span>Sort</span>
+              <select class="admin-input" name="failed_sort">
+                <option value="created_desc" <%= failedTrackFilters.sort === 'created_desc' ? 'selected' : '' %>>Newest first</option>
+                <option value="created_asc" <%= failedTrackFilters.sort === 'created_asc' ? 'selected' : '' %>>Oldest first</option>
+                <option value="domain_asc" <%= failedTrackFilters.sort === 'domain_asc' ? 'selected' : '' %>>Domain A-Z</option>
+                <option value="domain_desc" <%= failedTrackFilters.sort === 'domain_desc' ? 'selected' : '' %>>Domain Z-A</option>
+                <option value="price_desc" <%= failedTrackFilters.sort === 'price_desc' ? 'selected' : '' %>>Price high-low</option>
+                <option value="price_asc" <%= failedTrackFilters.sort === 'price_asc' ? 'selected' : '' %>>Price low-high</option>
+              </select>
+            </label>
+            <label>
+              <span>Max rows</span>
+              <input class="admin-input" type="number" name="failed_max_rows" min="1" max="500" value="<%= failedTrackFilters.maxRows %>">
+            </label>
+            <div class="admin-filter-actions">
+              <button class="btn btn-small" type="submit">Apply</button>
+              <a class="btn btn-small admin-cancel-btn admin-link-button" href="/admin?tab=failed-tracks">Reset</a>
+            </div>
+          </form>
           <% if (!recentFailedTrackLogs || recentFailedTrackLogs.length === 0) { %>
             <p>No failed track logs found.</p>
           <% } else { %>
@@ -367,10 +442,63 @@
             </div>
           <% } %>
         </div>
+      </section>
 
+      <section class="admin-tab-panel <%= activeTab === 'emails' ? 'is-active' : '' %>" data-tab-panel="emails">
         <div class="admin-panel">
           <h2 class="admin-section-title">Email logs</h2>
-          <p class="admin-subtitle">Newest 1000 entries from <code>email_logs</code></p>
+          <p class="admin-subtitle">Filtered rows from <code>email_logs</code></p>
+          <div class="admin-inline-actions">
+            <button class="btn btn-small" onclick="sendPendingEmails()">Send pending emails</button>
+          </div>
+          <form class="admin-filter-form" method="GET" action="/admin">
+            <input type="hidden" name="tab" value="emails">
+            <label>
+              <span>Search</span>
+              <input class="admin-input" type="text" name="email_search" value="<%= emailFilters.search %>" placeholder="Product, email, subject or error">
+            </label>
+            <label>
+              <span>Status</span>
+              <select class="admin-input" name="email_status">
+                <option value="all" <%= emailFilters.status === 'all' ? 'selected' : '' %>>All</option>
+                <option value="pending" <%= emailFilters.status === 'pending' ? 'selected' : '' %>>Pending</option>
+                <option value="sent" <%= emailFilters.status === 'sent' ? 'selected' : '' %>>Sent</option>
+                <option value="undeliverable" <%= emailFilters.status === 'undeliverable' ? 'selected' : '' %>>Undeliverable</option>
+                <option value="skipped_disabled" <%= emailFilters.status === 'skipped_disabled' ? 'selected' : '' %>>Skipped disabled</option>
+                <option value="skipped_missing_config" <%= emailFilters.status === 'skipped_missing_config' ? 'selected' : '' %>>Skipped missing config</option>
+              </select>
+            </label>
+            <label>
+              <span>Type</span>
+              <select class="admin-input" name="email_type">
+                <option value="all" <%= emailFilters.emailType === 'all' ? 'selected' : '' %>>All</option>
+                <option value="price_change" <%= emailFilters.emailType === 'price_change' ? 'selected' : '' %>>Price change</option>
+                <option value="track_inactive" <%= emailFilters.emailType === 'track_inactive' ? 'selected' : '' %>>Track inactive</option>
+                <option value="generic" <%= emailFilters.emailType === 'generic' ? 'selected' : '' %>>Generic</option>
+              </select>
+            </label>
+            <label>
+              <span>Sort</span>
+              <select class="admin-input" name="email_sort">
+                <option value="created_desc" <%= emailFilters.sort === 'created_desc' ? 'selected' : '' %>>Newest first</option>
+                <option value="created_asc" <%= emailFilters.sort === 'created_asc' ? 'selected' : '' %>>Oldest first</option>
+                <option value="status_asc" <%= emailFilters.sort === 'status_asc' ? 'selected' : '' %>>Status A-Z</option>
+                <option value="status_desc" <%= emailFilters.sort === 'status_desc' ? 'selected' : '' %>>Status Z-A</option>
+                <option value="attempts_desc" <%= emailFilters.sort === 'attempts_desc' ? 'selected' : '' %>>Attempts high-low</option>
+                <option value="attempts_asc" <%= emailFilters.sort === 'attempts_asc' ? 'selected' : '' %>>Attempts low-high</option>
+                <option value="email_asc" <%= emailFilters.sort === 'email_asc' ? 'selected' : '' %>>Email A-Z</option>
+                <option value="email_desc" <%= emailFilters.sort === 'email_desc' ? 'selected' : '' %>>Email Z-A</option>
+              </select>
+            </label>
+            <label>
+              <span>Max rows</span>
+              <input class="admin-input" type="number" name="email_max_rows" min="1" max="500" value="<%= emailFilters.maxRows %>">
+            </label>
+            <div class="admin-filter-actions">
+              <button class="btn btn-small" type="submit">Apply</button>
+              <a class="btn btn-small admin-cancel-btn admin-link-button" href="/admin?tab=emails">Reset</a>
+            </div>
+          </form>
           <% if (!recentEmailLogs || recentEmailLogs.length === 0) { %>
             <p>No email logs found.</p>
           <% } else { %>
@@ -388,6 +516,7 @@
                     <th>Original</th>
                     <th>Current</th>
                     <th>Email</th>
+                    <th>Attempts</th>
                     <th>Delivered</th>
                     <th>Error</th>
                   </tr>
@@ -398,13 +527,14 @@
                       <td><%= logEntry.id %></td>
                       <td><%= logEntry.created_at ? new Date(logEntry.created_at).toLocaleString() : '-' %></td>
                       <td><%= logEntry.email_type || 'generic' %></td>
-                      <td><%= logEntry.status || (logEntry.delivered ? 'sent' : 'pending') %></td>
+                      <td><%= logEntry.effective_status || logEntry.status || (logEntry.delivered ? 'sent' : 'pending') %></td>
                       <td><%= logEntry.track_id || '-' %></td>
                       <td><%= logEntry.product_name || '-' %></td>
                       <td><%= logEntry.subject || '-' %></td>
                       <td><%= logEntry.orig_price == null ? '-' : logEntry.orig_price %></td>
                       <td><%= logEntry.curr_price == null ? '-' : logEntry.curr_price %></td>
                       <td><%= logEntry.email || '-' %></td>
+                      <td><%= logEntry.attempt_count == null ? 0 : logEntry.attempt_count %></td>
                       <td><%= logEntry.delivered ? 'Yes' : 'No' %></td>
                       <td><%= logEntry.error_message || '-' %></td>
                     </tr>
@@ -494,11 +624,40 @@
       showToast('Log file cleared');
 
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'logs');
+      url.searchParams.set('tab', 'service-logs');
       window.location.href = url.toString();
     } catch (error) {
       console.log(error);
       showToast('Failed to clear log file');
+    }
+  }
+
+  async function sendPendingEmails() {
+    try {
+      const response = await fetch('/admin/emails/send-pending', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        showToast(body && body.error ? body.error : 'Failed to send pending emails');
+        return;
+      }
+
+      const summary = body && body.summary ? body.summary : {};
+      showToast(
+        `Pending emails processed: ${summary.sentCount || 0} sent, ${summary.undeliverableCount || 0} undeliverable, ${summary.skippedCount || 0} skipped`
+      );
+
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'emails');
+      window.location.href = url.toString();
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to send pending emails');
     }
   }
 
@@ -731,6 +890,11 @@
       chip.classList.remove('tooltip-open');
     });
   });
+
+  const serviceLogViewer = document.getElementById('service-log-viewer');
+  if (serviceLogViewer) {
+    serviceLogViewer.scrollTop = serviceLogViewer.scrollHeight;
+  }
 </script>
 
 </body>

@@ -4,6 +4,11 @@ const query = require('../db/db');
 const crawler = require('../utilities/crawler');
 const { readRecentLogs, getLogFilePath } = require('../utilities/logger');
 const {
+  getAllAppConfig,
+  getAppConfigRow,
+  setAppConfig
+} = require('../utilities/app-config');
+const {
   getRecentCrawlerFailureLogs,
   getCrawlerFailureLogById
 } = require('../utilities/crawler-failure-log');
@@ -28,7 +33,14 @@ const adminCheck = (req, res, next) => {
       user: req.user,
       logs: [],
       logFilePath: getLogFilePath(),
-      accessDenied: true
+      accessDenied: true,
+      failedUpdates: [],
+      recentRuns: [],
+      latestRun: null,
+      tracks: [],
+      appConfigs: [],
+      recentFailedTrackLogs: [],
+      recentEmailLogs: []
     });
   }
   next();
@@ -36,11 +48,14 @@ const adminCheck = (req, res, next) => {
 
 router.get('/', authCheck, adminCheck, async (req, res, next) => {
   try {
-    const [logs, failedUpdates, recentRuns, tracks] = await Promise.all([
+    const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs] = await Promise.all([
       readRecentLogs(),
       getRecentCrawlerFailureLogs(),
       getRecentCrawlerRuns(),
-      getAllTracksForAdmin()
+      getAllTracksForAdmin(),
+      getAllAppConfig(),
+      getRecentFailedTrackLogs(),
+      getRecentEmailLogs()
     ]);
 
     res.render('admin', {
@@ -50,6 +65,9 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       recentRuns,
       latestRun: recentRuns[0] || null,
       tracks,
+      appConfigs,
+      recentFailedTrackLogs,
+      recentEmailLogs,
       logFilePath: getLogFilePath(),
       accessDenied: false
     });
@@ -122,6 +140,48 @@ router.post('/tracks/:id/update-now', authCheck, adminCheck, async (req, res, ne
       message: 'Track update completed',
       runId: result.runId,
       result: result.itemResult
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/config', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const configKey = String(req.body.config_key || '').trim();
+    if (!configKey) {
+      return res.status(400).json({ error: 'Config key is required' });
+    }
+
+    const existingConfig = await getAppConfigRow(configKey);
+    if (!existingConfig) {
+      return res.status(404).json({ error: 'Config entry not found' });
+    }
+
+    const normalizedValue = normalizeConfigValue(req.body.value, existingConfig.data_type);
+    if (normalizedValue == null) {
+      return res.status(400).json({ error: `Invalid value for ${existingConfig.data_type}` });
+    }
+
+    const updatedConfig = await setAppConfig({
+      key: existingConfig.config_key,
+      category: existingConfig.category,
+      value: normalizedValue,
+      dataType: existingConfig.data_type,
+      description: existingConfig.description,
+      valueHelp: existingConfig.value_help
+    });
+
+    console.info('[admin] App config updated', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email,
+      configKey,
+      value: normalizedValue
+    });
+
+    res.status(200).json({
+      message: 'Config updated',
+      config: updatedConfig
     });
   } catch (error) {
     next(error);
@@ -219,4 +279,63 @@ async function getTrackById(trackId) {
   );
 
   return result.rows[0] || null;
+}
+
+async function getRecentFailedTrackLogs(limit = 1000) {
+  const result = await query(
+    `SELECT *
+     FROM failed_track_logs
+     ORDER BY created_at DESC, id DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return result.rows;
+}
+
+async function getRecentEmailLogs(limit = 1000) {
+  const result = await query(
+    `SELECT *
+     FROM email_logs
+     ORDER BY created_at DESC, id DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return result.rows;
+}
+
+function normalizeConfigValue(value, dataType) {
+  if (dataType === 'boolean') {
+    if (value === true || value === 'true' || value === 'on' || value === '1' || value === 1) {
+      return 'true';
+    }
+
+    if (value === false || value === 'false' || value === 'off' || value === '0' || value === 0 || value == null) {
+      return 'false';
+    }
+
+    return null;
+  }
+
+  if (dataType === 'integer') {
+    const parsed = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsed) ? String(parsed) : null;
+  }
+
+  if (dataType === 'number') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? String(parsed) : null;
+  }
+
+  if (dataType === 'json') {
+    try {
+      JSON.parse(String(value));
+      return String(value);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  return value == null ? '' : String(value);
 }

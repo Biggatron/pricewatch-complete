@@ -45,6 +45,18 @@ CREATE TABLE failed_track_logs (
     "created_at" timestamp
 );
 
+CREATE TABLE app_config (
+    "id" serial primary key,
+    "config_key" varchar(128) NOT NULL UNIQUE,
+    "category" varchar(64),
+    "value" text,
+    "data_type" varchar(32) NOT NULL DEFAULT 'string',
+    "description" text,
+    "value_help" text,
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
 CREATE TABLE crawler_failure_logs (
     "id" serial primary key,
     "run_id" integer,

@@ -6,6 +6,7 @@ const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
 const nodemailer = require('nodemailer');
+const { getAppConfig } = require('./app-config');
 const {
   insertCrawlerFailureLog,
   updateCrawlerFailureLogLinks
@@ -245,7 +246,7 @@ async function getHTML(url) {
   }
 
   let htmlFilePath = null;
-  if (finalFailureDetails && finalFailureDetails.responseHtml && shouldSaveHtml(getActionName(target), true)) {
+  if (finalFailureDetails && finalFailureDetails.responseHtml && await shouldSaveHtml(getActionName(target), true)) {
     htmlFilePath = saveHTMLFile(finalFailureDetails.responseHtml, {
       action: getActionName(target),
       trackId: target.id,
@@ -361,6 +362,7 @@ async function findPriceFromDiv(html, track) {
   }
 
   let priceDivBeforeAfter = [];
+  const htmlMinMatchSize = await getAppConfig('crawler.html_min_match_size', constants.crawler.htmlMinMatchSize);
 
   // Try to find exact match
   let matches = html.match(track.price_div);
@@ -377,17 +379,17 @@ async function findPriceFromDiv(html, track) {
   }
   // If matching full before and after price html then try only the closest portion
   if (!matches || !matches[1]) {
-    let searchString = `${priceDivBeforeAfter[0].slice(-constants.crawler.htmlMinMatchSize)}(.*?)<`;
+    let searchString = `${priceDivBeforeAfter[0].slice(-htmlMinMatchSize)}(.*?)<`;
     matches = html.match(searchString);
   }
   if (!matches || !matches[1]) {
-    matches = findHTMLSubstringRight(html, priceDivBeforeAfter[1].substring(1, constants.crawler.htmlMinMatchSize));
+    matches = findHTMLSubstringRight(html, priceDivBeforeAfter[1].substring(1, htmlMinMatchSize));
   }
 
   // If match is not found or match is over 500 characters long
   if (!matches || !matches[1] || matches[1].length >= 500) { 
     let htmlFilePath = null;
-    if (shouldSaveHtml('update', true)) {
+    if (await shouldSaveHtml('update', true)) {
       htmlFilePath = saveHTMLFile(html, {
         action: 'update',
         trackId: track.id,
@@ -428,7 +430,7 @@ async function findPriceFromDiv(html, track) {
     return handleMatchedPrice(match, track);
   } else {
     let htmlFilePath = null;
-    if (shouldSaveHtml('update', true)) {
+    if (await shouldSaveHtml('update', true)) {
       htmlFilePath = saveHTMLFile(html, {
         action: 'update',
         trackId: track.id,
@@ -737,7 +739,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     });
   }
     
-  if (shouldSaveHtml('create-track', false)) {
+  if (await shouldSaveHtml('create-track', false)) {
     saveHTMLFile(html, {
       action: 'create-track',
       trackId: null,
@@ -834,7 +836,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     // If price was not found on plain HTML then attempt to find price on fully rendered page
     if (fullyRenderHTML) {
       let htmlFilePath = null;
-      if (shouldSaveHtml('create-track', true)) {
+      if (await shouldSaveHtml('create-track', true)) {
         htmlFilePath = saveHTMLFile(html, {
           action: 'create-track',
           trackId: null,
@@ -954,20 +956,25 @@ async function updatePrice(newPrice, track) {
 }
 
 async function sendEmail(email) {
-  if (constants.email.sendEmail) {
+  const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
+  if (sendEmailsEnabled) {
     try {
+      const emailService = await getAppConfig('email.service', keys.email && keys.email.service);
+      const emailAddress = await getAppConfig('email.address', keys.email && keys.email.address);
+      const emailPassword = await getAppConfig('email.password', keys.email && keys.email.password);
+
       // Create a transporter
       const transporter = nodemailer.createTransport({
-        service: keys.email.service,
+        service: emailService,
         auth: {
-          user: keys.email.address, 
-          pass: keys.email.password,   // App password or your email password
+          user: emailAddress, 
+          pass: emailPassword,   // App password or your email password
         },
       });
 
       // Email options
       const mailOptions = {
-        from: keys.email.address, // Sender email
+        from: emailAddress, // Sender email
         to: email.email,          // Recipient email
         subject: email.subject,   // Email subject
         text: email.body,         // Plain text message
@@ -1068,15 +1075,19 @@ function isNumeric(value) {
   return /^\d+$/.test(value);
 }
 
-function shouldSaveHtml(action, failedOnly) {
+async function shouldSaveHtml(action, failedOnly) {
   const isUpdateAction = action === 'update';
-  const enabled = isUpdateAction ? constants.html.saveUpdateTrackHTML : constants.html.saveNewTrackHTML;
+  const enabled = await getAppConfig(
+    isUpdateAction ? 'html.save_update_track_html' : 'html.save_new_track_html',
+    isUpdateAction ? constants.html.saveUpdateTrackHTML : constants.html.saveNewTrackHTML
+  );
 
   if (!enabled) {
     return false;
   }
 
-  if (!constants.html.onlyFailed) {
+  const onlyFailed = await getAppConfig('html.only_failed', constants.html.onlyFailed);
+  if (!onlyFailed) {
     return true;
   }
 
@@ -1170,7 +1181,7 @@ async function processTrackUpdate(track, runId) {
     itemResult.htmlLookupSuccess = true;
     itemResult.stage = track.requires_javascript ? 'render-html' : 'fetch-html';
 
-    if (shouldSaveHtml('update', false)) {
+    if (await shouldSaveHtml('update', false)) {
       saveHTMLFile(html, {
         action: 'update',
         trackId: track.id,

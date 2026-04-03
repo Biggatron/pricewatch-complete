@@ -799,14 +799,44 @@ async function capturePreviewScreenshot(url) {
     const outputPath = path.join(PREVIEW_OUTPUT_DIR, fileName);
     const browser = await getPreviewBrowser();
     const page = await browser.newPage();
+    const userAgent = getRandomUserAgent();
 
     try {
       await page.setViewport(PREVIEW_VIEWPORT);
-      await page.setUserAgent(getRandomUserAgent());
-      await page.goto(url, {
+      await page.setUserAgent(userAgent);
+      const response = await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: PREVIEW_TIMEOUT_MS
       });
+      const navigationDetails = await getPuppeteerPageDiagnostics(page, response);
+
+      if (navigationDetails.status && navigationDetails.status >= 400) {
+        console.error('[preview] Non-OK screenshot response', {
+          url,
+          status: navigationDetails.status,
+          statusText: navigationDetails.statusText,
+          responseUrl: navigationDetails.responseUrl,
+          pageUrl: navigationDetails.pageUrl,
+          title: navigationDetails.title,
+          userAgent,
+          headers: navigationDetails.responseHeaders,
+          html: navigationDetails.responseHtml
+        });
+
+        const error = new Error(`Preview HTTP error! Status: ${navigationDetails.status}`);
+        error.details = {
+          url,
+          status: navigationDetails.status,
+          statusText: navigationDetails.statusText,
+          responseUrl: navigationDetails.responseUrl,
+          pageUrl: navigationDetails.pageUrl,
+          title: navigationDetails.title,
+          userAgent,
+          responseHeaders: navigationDetails.responseHeaders,
+          responseHtml: navigationDetails.responseHtml
+        };
+        throw error;
+      }
 
       await delay(await getPreviewPostNavigationDelayMs());
       await dismissCookieBanners(page);
@@ -828,6 +858,17 @@ async function capturePreviewScreenshot(url) {
 
       console.info('[preview] Screenshot captured', { url, fileName });
       return publicPath;
+    } catch (error) {
+      const failureDetails = await getPuppeteerPageDiagnostics(page).catch(() => ({}));
+      console.error('[preview] Screenshot capture failed', {
+        url,
+        userAgent,
+        pageUrl: failureDetails.pageUrl || null,
+        title: failureDetails.title || null,
+        html: failureDetails.responseHtml || null,
+        error
+      });
+      throw error;
     } finally {
       await page.close().catch(() => null);
     }
@@ -1328,6 +1369,56 @@ function getResponseHeadersObject(response) {
   return headers;
 }
 
+function getPuppeteerResponseDetails(response) {
+  if (!response) {
+    return {
+      status: null,
+      statusText: null,
+      responseUrl: null,
+      responseHeaders: null
+    };
+  }
+
+  return {
+    status: typeof response.status === 'function' ? response.status() : null,
+    statusText: typeof response.statusText === 'function' ? response.statusText() : null,
+    responseUrl: typeof response.url === 'function' ? response.url() : null,
+    responseHeaders: typeof response.headers === 'function' ? response.headers() : null
+  };
+}
+
+async function getPuppeteerPageDiagnostics(page, response = null) {
+  const responseDetails = getPuppeteerResponseDetails(response);
+  let pageUrl = null;
+  let title = null;
+  let responseHtml = null;
+
+  try {
+    pageUrl = page.url();
+  } catch (error) {
+    pageUrl = null;
+  }
+
+  try {
+    title = await page.title();
+  } catch (error) {
+    title = null;
+  }
+
+  try {
+    responseHtml = await page.content();
+  } catch (error) {
+    responseHtml = null;
+  }
+
+  return {
+    ...responseDetails,
+    pageUrl,
+    title,
+    responseHtml
+  };
+}
+
 async function getRenderedHTML(url) {
   const target = typeof url === 'string' ? { price_url: url } : url;
   // Launch a headless browser
@@ -1336,6 +1427,7 @@ async function getRenderedHTML(url) {
   
   let attempts = 0;
   let lastError = null;
+  let finalFailureDetails = null;
 
   try {
     while (attempts < 3) {
@@ -1346,12 +1438,51 @@ async function getRenderedHTML(url) {
         await page.setUserAgent(randomUserAgent);
 
         // Navigate to the page
-        await page.goto(target.price_url, {
+        const response = await page.goto(target.price_url, {
             waitUntil: 'networkidle2', // Wait until all network requests are finished
         });
+        const navigationDetails = await getPuppeteerPageDiagnostics(page, response);
+
+        if (navigationDetails.status && navigationDetails.status >= 400) {
+          console.error('[crawler] Non-OK rendered HTML response', {
+            url: target.price_url,
+            status: navigationDetails.status,
+            statusText: navigationDetails.statusText,
+            responseUrl: navigationDetails.responseUrl,
+            pageUrl: navigationDetails.pageUrl,
+            title: navigationDetails.title,
+            userAgent: randomUserAgent,
+            headers: navigationDetails.responseHeaders,
+            html: navigationDetails.responseHtml
+          });
+
+          const error = new Error(`Rendered HTTP error! Status: ${navigationDetails.status}`);
+          error.details = {
+            url: target.price_url,
+            status: navigationDetails.status,
+            statusText: navigationDetails.statusText,
+            responseUrl: navigationDetails.responseUrl,
+            pageUrl: navigationDetails.pageUrl,
+            title: navigationDetails.title,
+            userAgent: randomUserAgent,
+            responseHeaders: navigationDetails.responseHeaders,
+            responseHtml: navigationDetails.responseHtml
+          };
+          finalFailureDetails = {
+            status: navigationDetails.status,
+            statusText: navigationDetails.statusText,
+            responseUrl: navigationDetails.responseUrl,
+            pageUrl: navigationDetails.pageUrl,
+            title: navigationDetails.title,
+            userAgent: randomUserAgent,
+            responseHeaders: navigationDetails.responseHeaders,
+            responseHtml: navigationDetails.responseHtml
+          };
+          throw error;
+        }
       
         // Extract the fully rendered HTML
-        const html = await page.content();
+        const html = navigationDetails.responseHtml || await page.content();
 
         if (!html) {
           throw new Error('Empty HTML content');
@@ -1361,6 +1492,21 @@ async function getRenderedHTML(url) {
       } catch (error) {
         attempts++;
         lastError = error;
+        if (!finalFailureDetails) {
+          const failureDetails = await getPuppeteerPageDiagnostics(page).catch(() => ({}));
+          finalFailureDetails = {
+            status: error && error.details ? error.details.status || null : null,
+            statusText: error && error.details ? error.details.statusText || null : null,
+            responseUrl: error && error.details ? error.details.responseUrl || null : null,
+            pageUrl: failureDetails.pageUrl || null,
+            title: failureDetails.title || null,
+            userAgent: randomUserAgent,
+            responseHeaders: error && error.details ? error.details.responseHeaders || null : null,
+            responseHtml: error && error.details && error.details.responseHtml
+              ? error.details.responseHtml
+              : failureDetails.responseHtml || null
+          };
+        }
         console.warn('[crawler] Rendered HTML fetch attempt failed', {
           url: target.price_url,
           attempt: attempts,
@@ -1369,7 +1515,16 @@ async function getRenderedHTML(url) {
       }
     }
 
-    const failureLogId = await logCrawlerFailure(target, 'render-html', lastError, {});
+    const failureLogId = await logCrawlerFailure(target, 'render-html', lastError, {
+      status: finalFailureDetails ? finalFailureDetails.status : null,
+      statusText: finalFailureDetails ? finalFailureDetails.statusText : null,
+      responseUrl: finalFailureDetails ? finalFailureDetails.responseUrl : null,
+      pageUrl: finalFailureDetails ? finalFailureDetails.pageUrl : null,
+      title: finalFailureDetails ? finalFailureDetails.title : null,
+      userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null,
+      responseHeaders: finalFailureDetails ? finalFailureDetails.responseHeaders : null,
+      responseHtml: finalFailureDetails ? finalFailureDetails.responseHtml : null
+    });
     if (lastError && lastError.details) {
       lastError.details.failureLogId = failureLogId;
       lastError.details.stage = 'render-html';

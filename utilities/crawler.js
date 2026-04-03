@@ -1233,18 +1233,36 @@ async function getHTML(url) {
       const response = await fetch(target.price_url, settings);
 
       if (!response.ok) {
+        const responseHeaders = getResponseHeadersObject(response);
         const responseHtml = await response.text();
+
+        console.error('[crawler] Non-OK HTML fetch response', {
+          url: target.price_url,
+          status: response.status,
+          statusText: response.statusText || null,
+          responseUrl: response.url || target.price_url,
+          userAgent: randomUserAgent,
+          headers: responseHeaders,
+          html: responseHtml
+        });
 
         const error = new Error(`HTTP error! Status: ${response.status}`);
         error.details = {
           url: target.price_url,
           status: response.status,
-          userAgent: randomUserAgent
+          statusText: response.statusText || null,
+          responseUrl: response.url || target.price_url,
+          userAgent: randomUserAgent,
+          responseHeaders,
+          responseHtml
         };
         finalFailureDetails = {
           responseHtml,
           status: response.status,
-          userAgent: randomUserAgent
+          statusText: response.statusText || null,
+          responseUrl: response.url || target.price_url,
+          userAgent: randomUserAgent,
+          responseHeaders
         };
         throw error;
       }
@@ -1281,7 +1299,11 @@ async function getHTML(url) {
   const failureLogId = await logCrawlerFailure(target, 'fetch-html', lastError, {
     htmlFilePath,
     status: finalFailureDetails ? finalFailureDetails.status : null,
-    userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null
+    statusText: finalFailureDetails ? finalFailureDetails.statusText : null,
+    responseUrl: finalFailureDetails ? finalFailureDetails.responseUrl : null,
+    userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null,
+    responseHeaders: finalFailureDetails ? finalFailureDetails.responseHeaders : null,
+    responseHtml: finalFailureDetails ? finalFailureDetails.responseHtml : null
   });
   const finalError = new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
   finalError.details = {
@@ -1290,6 +1312,20 @@ async function getHTML(url) {
     stage: 'fetch-html'
   };
   throw finalError;
+}
+
+function getResponseHeadersObject(response) {
+  const headers = {};
+
+  if (!response || !response.headers || typeof response.headers.forEach !== 'function') {
+    return headers;
+  }
+
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  return headers;
 }
 
 async function getRenderedHTML(url) {

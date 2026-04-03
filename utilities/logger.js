@@ -13,10 +13,12 @@ let isInitialized = false;
 let logFilePath = '';
 let logStream = null;
 
-function initializeLogger() {
+function initializeLogger(options = {}) {
   if (isInitialized) {
     return logFilePath;
   }
+
+  const announce = options.announce !== false;
 
   const logDirectory = path.resolve(process.cwd(), keys.logging.directory);
   fs.mkdirSync(logDirectory, { recursive: true });
@@ -29,7 +31,9 @@ function initializeLogger() {
   console.error = createLoggerMethod('error');
 
   isInitialized = true;
-  console.info(`File logging enabled at ${logFilePath}`);
+  if (announce) {
+    console.info(`File logging enabled at ${logFilePath}`);
+  }
 
   return logFilePath;
 }

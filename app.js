@@ -23,7 +23,9 @@ const port = keys.port;
 // res.authError is set in passport.js if deserialization of user from cookie fails
 app.get('/*', (req, res, next) => {
   if ( res.authError ) {
-    console.log(res.authError)
+    console.warn('[auth] Session authentication error, redirecting to login', {
+      error: res.authError
+    });
     res.authError = null;
     res.redirect('/auth/login');
   } else {

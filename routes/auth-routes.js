@@ -22,7 +22,6 @@ router.get('/logout', (req, res) => {
 
 // Local signup
 router.post('/local/signup', (req, res) => {
-    console.log("local/signup route hit")
     newLocalUser(req, res);
 });
 
@@ -33,7 +32,6 @@ router.post('/local/login', passport.authenticate('local', { successRedirect: '/
         err.status = 401;
         next(err);
     } else {
-        console.log('redirecting to profile')
         res.redirect('/profile');
     }
 });
@@ -53,17 +51,14 @@ router.get('/google/redirect', passport.authenticate('google'), (req, res) => {
 async function newLocalUser(req, res) {
     let user = req.body;
     user.create_date = new Date();
-    console.log({user: user})
     // Validate email, if invalid returns message
     let validationError = await validateEmail(user.email);
     if (validationError) {
-        console.log({validationEmail: validationError})
         res.status(400).json({error: validationError});
         return;
     }
     // Validate password
     if (!user.password || user.password.length < 8) {
-        console.log("invalid password");
         res.status(400).json({error: 'Invalid password'});
         return;
     }
@@ -72,8 +67,6 @@ async function newLocalUser(req, res) {
     let salt = crypto.randomBytes(16);
     crypto.pbkdf2(user.password, salt, 310000, 32, 'sha256', async function(err, hashedPassword) {
         if (err) { return next(err); }
-        console.log('Inserting new user')
-        console.log({hashedPassword: hashedPassword})
         const result = await query(
             `INSERT INTO user_account (email, name, hashed_password, salt, created_at, last_modified_at) 
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -81,14 +74,11 @@ async function newLocalUser(req, res) {
         );
 
         if (result.rows[0]) {
-            console.log({userCreated: result.rows})
-            //res.status(200).json(result.rows[0]);
             let user = {
                 id: result.rows[0].id,
                 email: result.rows[0].email,
                 name: result.rows[0].name
             }
-            console.log('Logging in user')
             req.login(user, function(err) {
                 if (err) { return next(err); }
                 res.status(200).json(user);

@@ -2,7 +2,7 @@ const { initializeLogger } = require('../utilities/logger');
 const { ensureAppConfigTable } = require('../utilities/app-config');
 const { runJob } = require('../utilities/job-runner');
 
-initializeLogger();
+initializeLogger({ announce: false });
 
 main().catch((error) => {
   console.error('[run-job] Job execution failed', error);

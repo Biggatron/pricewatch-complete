@@ -18,8 +18,6 @@ router.post('/update-user-email', authCheck, (req, res) => {
 });
 
 async function renderProfile(req, res) {
-    console.log('Rendering profile page for user:');
-    console.log({user: req.user});
     res.render('profile', { user: req.user });
 }
 
@@ -69,7 +67,10 @@ async function updateUserEmail(req, res) {
     } catch (error) {
         // Rollback the transaction in case of an error
         await query('ROLLBACK');
-        console.error('Error updating user email:', error);
+        console.error('[profile] Failed to update user email', {
+            userId: req.user && req.user.id,
+            error
+        });
         res.status(500).json({ message: 'Internal server error.' });
     }
 }

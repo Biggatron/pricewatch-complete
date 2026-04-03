@@ -952,6 +952,8 @@ async function dismissCookieBannerInFrame(frame) {
       'allow all',
       'i agree',
       'agree',
+      'leyfa vafrakökur',
+      'samþykkja vafrakökur',
       'samþykkja',
       'leyfa allar'
     ]);
@@ -1155,7 +1157,14 @@ async function getPreviewBrowser() {
 async function cleanupStoredPreviewFiles() {
   lastPreviewCleanupAt = Date.now();
   const summary = await cleanupOldPreviewFiles();
-  console.info('[preview] Stored preview cleanup completed', summary);
+  if (
+    Number(summary.deletedCount || 0) > 0 ||
+    Number(summary.missingFileCount || 0) > 0 ||
+    Number(summary.orphanFileCount || 0) > 0 ||
+    Number(summary.legacyMetadataFilesRemoved || 0) > 0
+  ) {
+    console.info('[preview] Stored preview cleanup completed', summary);
+  }
   return summary;
 }
 
@@ -1369,28 +1378,14 @@ function saveHTMLFile(html, metadata) {
 }
 
 async function findPriceFromDiv(html, track) {
-  console.info('[crawler] Looking for updated price', {
-    id: track.id,
-    productName: track.product_name
-  });
   const jsonLdPrice = extractPriceFromJsonLd(html);
   if (isValidMatchedPrice(jsonLdPrice)) {
-    console.info('[crawler] Found price in JSON-LD product schema', {
-      id: track.id,
-      productName: track.product_name,
-      price: jsonLdPrice
-    });
     return handleMatchedPrice(jsonLdPrice, track);
   }
 
   if (trackUsesNextDataPriceDiv(track)) {
     const nextDataPrice = extractPriceFromNextData(html);
     if (isValidMatchedPrice(nextDataPrice)) {
-      console.info('[crawler] Found price in Next.js __NEXT_DATA__ payload', {
-        id: track.id,
-        productName: track.product_name,
-        price: nextDataPrice
-      });
       return handleMatchedPrice(nextDataPrice, track);
     }
   }
@@ -1535,12 +1530,6 @@ async function handleMatchedPrice(match, track) {
       emailDurationMs
     };
   }
-
-  console.info('[crawler] Price unchanged', {
-    id: track.id,
-    price: match
-  });
-
   if (!track.active) {
     await setTrackAsActive(track);
     console.info('[crawler] Track reactivated', {
@@ -2967,14 +2956,6 @@ async function processTrackUpdate(track, runId) {
   let itemResult = createRunItemResult(track);
 
   try {
-    console.info('[crawler] Processing track', {
-      runId,
-      id: track.id,
-      productName: track.product_name,
-      currPrice: track.curr_price,
-      url: track.price_url
-    });
-
     const trackContext = {
       ...track,
       action: 'update',
@@ -3004,13 +2985,6 @@ async function processTrackUpdate(track, runId) {
       ...itemResult,
       ...(await findPriceFromDiv(html, trackContext))
     };
-
-    console.info('[crawler] Track processed', {
-      runId,
-      id: track.id,
-      status: itemResult.status,
-      durationMs: Date.now() - startedAt
-    });
   } catch (error) {
     itemResult = await handleUnexpectedTrackError(track, runId, error, itemResult);
 

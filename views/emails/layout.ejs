@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= subject %></title>
+</head>
+<body style="margin:0;padding:0;background-color:#f2eeee;color:#333333;font-family:Arial,Helvetica,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    <%= previewText %>
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f2eeee;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;background-color:#ffffff;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="background-color:#ffb758;padding:22px 28px;">
+              <div style="color:#5c3b00;font-size:12px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">Pricewatcher</div>
+              <div style="color:#333333;font-size:28px;font-weight:bold;line-height:1.2;margin-top:8px;">Price update from your tracker</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-top:6px solid <%= accentColor %>;padding:28px;">
+              <%- contentHtml %>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#333333;padding:18px 28px;">
+              <div style="color:#f2eeee;font-size:13px;line-height:1.6;">
+                You are receiving this email because Pricewatcher is monitoring a product for you.
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

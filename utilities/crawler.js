@@ -20,6 +20,7 @@ const {
 } = require('./crawler-run-log');
 const { insertTrackHistoryEntry } = require('./track-history-log');
 const { ensureTrackSoftDeleteColumn } = require('./track-soft-delete');
+const { renderEmailTemplate } = require('./email-template');
 const MAX_MATCH_PRICE = 1000000000;
 const MAX_EMAIL_DELIVERY_ATTEMPTS = 3;
 const PREVIEW_OUTPUT_DIR = path.join(__dirname, '..', 'public', 'generated-previews');
@@ -48,6 +49,7 @@ module.exports = {
   getTrackHtmlPreview,
   getUrlPreview,
   deliverPendingEmails,
+  sendTemplateTestEmail,
   cleanupStoredPreviewFiles,
   getPreviewCacheSummary
 };
@@ -1517,7 +1519,9 @@ async function handleMatchedPrice(match, track) {
     // Update track object with new price before sending email
     const previousPrice = track.curr_price;
     track.curr_price = match;
-    const emailDurationMs = await sendPriceUpdateEmail(track);
+    const emailDurationMs = await sendPriceUpdateEmail(track, {
+      previousPrice
+    });
     return {
       status: priceDirection === 'lower' ? 'updated_lower' : priceDirection === 'higher' ? 'updated_higher' : 'updated_other',
       stage: 'find-price',
@@ -2375,6 +2379,22 @@ async function deliverPendingEmail(emailLog, deliveryContext) {
 
 async function sendQueuedEmailWithContext(emailLog, deliveryContext) {
   if (deliveryContext.transportMode === 'ses') {
+    const emailBody = {};
+
+    if (emailLog.body) {
+      emailBody.Text = {
+        Data: emailLog.body,
+        Charset: 'UTF-8'
+      };
+    }
+
+    if (emailLog.html_body) {
+      emailBody.Html = {
+        Data: emailLog.html_body,
+        Charset: 'UTF-8'
+      };
+    }
+
     const command = new SendEmailCommand({
       FromEmailAddress: deliveryContext.senderAddress,
       Destination: {
@@ -2386,12 +2406,7 @@ async function sendQueuedEmailWithContext(emailLog, deliveryContext) {
             Data: emailLog.subject || '',
             Charset: 'UTF-8'
           },
-          Body: {
-            Text: {
-              Data: emailLog.body || '',
-              Charset: 'UTF-8'
-            }
-          }
+          Body: emailBody
         }
       }
     });
@@ -2407,7 +2422,8 @@ async function sendQueuedEmailWithContext(emailLog, deliveryContext) {
     from: deliveryContext.senderAddress,
     to: emailLog.email,
     subject: emailLog.subject,
-    text: emailLog.body
+    text: emailLog.body,
+    html: emailLog.html_body || undefined
   });
 }
 
@@ -2523,36 +2539,107 @@ function getAwsMailConfig() {
   };
 }
 
-async function sendPriceUpdateEmail(track) {
-  let email = {
+async function sendPriceUpdateEmail(track, options = {}) {
+  const renderedEmail = await renderEmailTemplate('price_change', {
+    productName: track.product_name,
+    productUrl: track.price_url,
+    originalPrice: track.orig_price,
+    previousPrice: options.previousPrice,
+    currentPrice: track.curr_price
+  });
+
+  const email = {
     track_id: track.id,
     product_name: track.product_name,
     orig_price: track.orig_price,
     curr_price: track.curr_price,
     email: track.email,
     email_type: 'price_change',
+    template_key: renderedEmail.templateKey,
     delivered: false,
     created_at: new Date(),
-    subject: `Price change: ${track.product_name}`,
-    body: `Price of "${track.product_name}" is now ${track.curr_price}. Original price was ${track.orig_price}. View product here: ${track.price_url}`
+    subject: renderedEmail.subject,
+    body: renderedEmail.text,
+    html_body: renderedEmail.html
   };
   return queueEmail(email);
 }
 
 async function sendTrackInactiveEmail(track) {
-  let email = {
+  const renderedEmail = await renderEmailTemplate('track_inactive', {
+    productName: track.product_name,
+    productUrl: track.price_url,
+    originalPrice: track.orig_price
+  });
+
+  const email = {
     track_id: track.id,
     product_name: track.product_name,
     orig_price: track.orig_price,
     curr_price: null,
     email: track.email,
     email_type: 'track_inactive',
+    template_key: renderedEmail.templateKey,
     delivered: false,
     created_at: new Date(),
-    subject: `Tracking paused: ${track.product_name}`,
-    body: `Tracking for "${track.product_name}" has been paused because the price could not be checked successfully. Original price was ${track.orig_price}. Please review the product page here: ${track.price_url}`
+    subject: renderedEmail.subject,
+    body: renderedEmail.text,
+    html_body: renderedEmail.html
   };
   return queueEmail(email);
+}
+
+async function sendTemplateTestEmail({
+  templateKey,
+  recipientEmail,
+  productName,
+  productUrl,
+  originalPrice = null,
+  previousPrice = null,
+  currentPrice = null
+}) {
+  const renderedEmail = await renderEmailTemplate(templateKey, {
+    productName,
+    productUrl,
+    originalPrice,
+    previousPrice,
+    currentPrice
+  });
+
+  const email = {
+    track_id: null,
+    product_name: productName,
+    orig_price: originalPrice,
+    curr_price: currentPrice,
+    email: recipientEmail,
+    email_type: templateKey,
+    template_key: renderedEmail.templateKey,
+    delivered: false,
+    created_at: new Date(),
+    status: 'pending',
+    subject: renderedEmail.subject,
+    body: renderedEmail.text,
+    html_body: renderedEmail.html
+  };
+
+  const emailLog = await insertEmail(email);
+  if (!emailLog) {
+    throw new Error('Failed to create email log');
+  }
+
+  const deliveryContext = await createEmailTransport({});
+  const deliveryResult = await deliverPendingEmail(emailLog, deliveryContext);
+
+  if (deliveryResult.status !== 'sent') {
+    throw new Error('Failed to send test email');
+  }
+
+  return {
+    emailLogId: emailLog.id,
+    recipient: recipientEmail,
+    subject: renderedEmail.subject,
+    status: deliveryResult.status
+  };
 }
 
 let emailLogTableReadyPromise = null;
@@ -2578,9 +2665,11 @@ async function ensureEmailLogTableColumns() {
       "curr_price" numeric,
       "email" varchar(256),
       "email_type" varchar(64),
+      "template_key" varchar(64),
       "status" varchar(32),
       "subject" text,
       "body" text,
+      "html_body" text,
       "error_message" text,
       "delivered" boolean,
       "sent_at" timestamp,
@@ -2599,9 +2688,11 @@ async function ensureEmailLogTableColumns() {
       ADD COLUMN IF NOT EXISTS curr_price numeric,
       ADD COLUMN IF NOT EXISTS email varchar(256),
       ADD COLUMN IF NOT EXISTS email_type varchar(64),
+      ADD COLUMN IF NOT EXISTS template_key varchar(64),
       ADD COLUMN IF NOT EXISTS status varchar(32),
       ADD COLUMN IF NOT EXISTS subject text,
       ADD COLUMN IF NOT EXISTS body text,
+      ADD COLUMN IF NOT EXISTS html_body text,
       ADD COLUMN IF NOT EXISTS error_message text,
       ADD COLUMN IF NOT EXISTS delivered boolean,
       ADD COLUMN IF NOT EXISTS sent_at timestamp,
@@ -2624,9 +2715,11 @@ async function insertEmail(email) {
         curr_price,
         email,
         email_type,
+        template_key,
         status,
         subject,
         body,
+        html_body,
         error_message,
         delivered,
         sent_at,
@@ -2635,7 +2728,7 @@ async function insertEmail(email) {
         next_send_at,
         created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
        RETURNING *`,
       [
         email.track_id,
@@ -2644,16 +2737,18 @@ async function insertEmail(email) {
         email.curr_price,
         email.email,
         email.email_type || 'generic',
+        email.template_key || null,
         email.status || (email.delivered ? 'sent' : 'pending'),
         email.subject || null,
         email.body || null,
+        email.html_body || null,
         email.error_message || null,
         email.delivered,
         email.sent_at || null,
         Number.isFinite(email.attempt_count) ? email.attempt_count : 0,
         email.last_attempt_at || null,
         email.next_send_at || email.created_at || new Date(),
-        email.created_at,
+        email.created_at
       ]
     );
 

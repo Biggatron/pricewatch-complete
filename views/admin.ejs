@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <%- include('./partials/head'); %>
-  <link rel="stylesheet" href="/css/admin.css?v=20260403-2" type="text/css">
+  <link rel="stylesheet" href="/css/admin.css?v=20260403-3" type="text/css">
   <link rel="stylesheet" href="/css/track.css?v=20260403-2" type="text/css">
 </head>
 <body class="body-container">
@@ -613,6 +613,27 @@
 
       <section class="admin-tab-panel <%= activeTab === 'emails' ? 'is-active' : '' %>" data-tab-panel="emails">
         <div class="admin-panel">
+          <h2 class="admin-section-title">Template tester</h2>
+          <p class="admin-subtitle">Choose a template, tweak the parameters, and send a real test email using the active transport settings.</p>
+          <div class="admin-filter-form">
+            <label>
+              <span>Template</span>
+              <select class="admin-input" id="email-template-select">
+                <option value="">Choose template</option>
+                <% emailTemplateTestDefinitions.forEach((templateDefinition) => { %>
+                  <option value="<%= templateDefinition.key %>"><%= templateDefinition.label %></option>
+                <% }); %>
+              </select>
+            </label>
+          </div>
+          <p class="admin-template-description" id="email-template-description">Select a template to load its test parameters.</p>
+          <div class="admin-template-fields" id="email-template-fields"></div>
+          <div class="admin-inline-actions">
+            <button class="btn btn-small" type="button" id="email-template-send-button" onclick="sendTemplateTestEmail()" disabled>Send test email</button>
+          </div>
+        </div>
+
+        <div class="admin-panel">
           <h2 class="admin-section-title">Email logs</h2>
           <p class="admin-subtitle">Filtered rows from <code>email_logs</code></p>
           <div class="admin-inline-actions">
@@ -737,6 +758,8 @@
 </footer>
 
 <script>
+  const emailTemplateTestDefinitions = <%- JSON.stringify(emailTemplateTestDefinitions || []) %>;
+
   document.querySelectorAll('[data-tab-target]').forEach((tabButton) => {
     tabButton.addEventListener('click', () => {
       const target = tabButton.dataset.tabTarget;
@@ -808,6 +831,107 @@
 
   async function sendPendingEmails() {
     runAdminJob('email_delivery');
+  }
+
+  function renderEmailTemplateFields() {
+    const selectEl = document.getElementById('email-template-select');
+    const descriptionEl = document.getElementById('email-template-description');
+    const fieldsEl = document.getElementById('email-template-fields');
+    const sendButtonEl = document.getElementById('email-template-send-button');
+    if (!selectEl || !descriptionEl || !fieldsEl || !sendButtonEl) {
+      return;
+    }
+
+    const templateDefinition = emailTemplateTestDefinitions.find((definition) => definition.key === selectEl.value);
+    fieldsEl.innerHTML = '';
+
+    if (!templateDefinition) {
+      descriptionEl.textContent = 'Select a template to load its test parameters.';
+      sendButtonEl.disabled = true;
+      return;
+    }
+
+    descriptionEl.textContent = templateDefinition.description || '';
+
+    templateDefinition.fields.forEach((field) => {
+      const labelEl = document.createElement('label');
+
+      const spanEl = document.createElement('span');
+      spanEl.textContent = field.label;
+      labelEl.appendChild(spanEl);
+
+      const inputEl = document.createElement(field.type === 'textarea' ? 'textarea' : 'input');
+      inputEl.className = 'admin-input';
+      inputEl.name = field.key;
+      inputEl.setAttribute('data-template-field', field.key);
+
+      if (field.type !== 'textarea') {
+        inputEl.type = field.type || 'text';
+      }
+
+      if (field.placeholder) {
+        inputEl.placeholder = field.placeholder;
+      }
+
+      if (field.step) {
+        inputEl.step = field.step;
+      }
+
+      if (field.required) {
+        inputEl.required = true;
+      }
+
+      inputEl.value = field.defaultValue == null ? '' : field.defaultValue;
+      labelEl.appendChild(inputEl);
+      fieldsEl.appendChild(labelEl);
+    });
+
+    sendButtonEl.disabled = false;
+  }
+
+  async function sendTemplateTestEmail() {
+    const selectEl = document.getElementById('email-template-select');
+    const sendButtonEl = document.getElementById('email-template-send-button');
+    if (!selectEl || !sendButtonEl || !selectEl.value) {
+      showToast('Choose a template first');
+      return;
+    }
+
+    const payload = {
+      template_key: selectEl.value
+    };
+
+    document.querySelectorAll('[data-template-field]').forEach((fieldEl) => {
+      payload[fieldEl.name] = fieldEl.value;
+    });
+
+    sendButtonEl.disabled = true;
+
+    try {
+      const response = await fetch('/admin/emails/test-send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        showToast(body && (body.error || body.message) ? (body.error || body.message) : 'Failed to send test email');
+        return;
+      }
+
+      showToast(body && body.message ? body.message : 'Test email sent');
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'emails');
+      window.location.href = url.toString();
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to send test email');
+    } finally {
+      sendButtonEl.disabled = false;
+    }
   }
 
   async function saveTrack(trackId) {
@@ -1108,6 +1232,15 @@
   const serviceLogViewer = document.getElementById('service-log-viewer');
   if (serviceLogViewer) {
     serviceLogViewer.scrollTop = serviceLogViewer.scrollHeight;
+  }
+
+  const emailTemplateSelect = document.getElementById('email-template-select');
+  if (emailTemplateSelect) {
+    emailTemplateSelect.addEventListener('change', renderEmailTemplateFields);
+    if (emailTemplateTestDefinitions.length > 0) {
+      emailTemplateSelect.value = emailTemplateTestDefinitions[0].key;
+      renderEmailTemplateFields();
+    }
   }
 </script>
 

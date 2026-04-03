@@ -1,0 +1,57 @@
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td>
+      <div style="display:inline-block;background-color:#f39c12;border-radius:999px;color:#ffffff;font-size:13px;font-weight:bold;line-height:1;padding:8px 14px;">
+        Tracking paused
+      </div>
+      <h1 style="color:#333333;font-size:28px;line-height:1.25;margin:18px 0 10px;">We could not locate the product price</h1>
+      <p style="color:#555555;font-size:16px;line-height:1.7;margin:0;">
+        Pricewatcher was unable to find the current price for <strong><%= productName %></strong>.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fff6e8;border:1px solid #f0d2a0;border-radius:10px;">
+        <tr>
+          <td style="padding:18px;">
+            <p style="color:#5f4a1d;font-size:15px;line-height:1.7;margin:0 0 12px;">
+              This can happen for a few different reasons:
+            </p>
+            <ul style="color:#5f4a1d;font-size:15px;line-height:1.8;margin:0;padding-left:20px;">
+              <% possibleReasons.forEach((reason) => { %>
+                <li><%= reason %></li>
+              <% }); %>
+            </ul>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:18px;">
+      <p style="color:#555555;font-size:15px;line-height:1.7;margin:0;">
+        Original tracked price: <strong><%= originalPriceFormatted %></strong>.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:14px;">
+      <p style="color:#555555;font-size:15px;line-height:1.7;margin:0;">
+        Please check the product page. If the product is still active, you can insert the track again to resume monitoring.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:24px;">
+      <a href="<%= productUrl %>" style="background-color:#ffb758;border-radius:8px;color:#333333;display:inline-block;font-size:16px;font-weight:bold;line-height:1;padding:14px 20px;text-decoration:none;">Check product</a>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:20px;">
+      <p style="color:#777777;font-size:13px;line-height:1.7;margin:0;word-break:break-word;">
+        Product link: <a href="<%= productUrl %>" style="color:#c26a00;text-decoration:none;"><%= productUrl %></a>
+      </p>
+    </td>
+  </tr>
+</table>

@@ -24,6 +24,7 @@ const {
   getCrawlerRunItems
 } = require('../utilities/crawler-run-log');
 const { ensureTrackSoftDeleteColumn } = require('../utilities/track-soft-delete');
+const { TEMPLATE_RENDERERS } = require('../utilities/email-template');
 
 const authCheck = (req, res, next) => {
   if (!req.user) {
@@ -54,6 +55,7 @@ const adminCheck = (req, res, next) => {
       },
       recentFailedTrackLogs: [],
       recentEmailLogs: [],
+      emailTemplateTestDefinitions: [],
       activeTab: getActiveAdminTab(req.query.tab)
     });
   }
@@ -66,6 +68,7 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
     const trackFilters = getTrackAdminFilters(req.query);
     const failedTrackFilters = getFailedTrackLogFilters(req.query);
     const emailFilters = getEmailLogFilters(req.query);
+    const emailTemplateTestDefinitions = buildEmailTemplateTestDefinitions(req.user);
 
     const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs, jobScheduleSummaries] = await Promise.all([
       readRecentLogs(),
@@ -99,6 +102,7 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       previewCacheSummary,
       recentFailedTrackLogs,
       recentEmailLogs,
+      emailTemplateTestDefinitions,
       trackFilters,
       failedTrackFilters,
       emailFilters,
@@ -107,6 +111,41 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       accessDenied: false
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/emails/test-send', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const templateKey = String(req.body.template_key || '').trim();
+    const payload = normalizeEmailTemplatePayload(templateKey, req.body || {});
+
+    const result = await crawler.sendTemplateTestEmail({
+      templateKey,
+      ...payload
+    });
+
+    console.info('[admin] Test email sent', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email,
+      templateKey,
+      recipient: payload.recipientEmail,
+      emailLogId: result.emailLogId
+    });
+
+    res.status(200).json({
+      message: `Test email sent to ${payload.recipientEmail}`,
+      result
+    });
+  } catch (error) {
+    if (error && error.code === 'INVALID_TEMPLATE_TEST_INPUT') {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (error && error.code === 'EMAIL_CONFIG_MISSING') {
+      return res.status(400).json({ error: error.message });
+    }
+
     next(error);
   }
 });
@@ -754,4 +793,160 @@ function buildJobSettings(appConfigs) {
       cronExpression: cronConfig && cronConfig.value ? cronConfig.value : job.defaultCron
     };
   });
+}
+
+function buildEmailTemplateTestDefinitions(user) {
+  const defaultRecipientEmail = user && user.email ? user.email : '';
+  const defaultProductName = 'Samsung 65" QLED TV';
+  const defaultProductUrl = 'https://example.com/products/samsung-65-qled-tv';
+
+  return [
+    {
+      key: 'price_change',
+      label: 'Price change',
+      description: 'Send a styled test email for either a drop or increase based on the before and after prices.',
+      fields: [
+        {
+          key: 'recipientEmail',
+          label: 'Recipient email',
+          type: 'email',
+          required: true,
+          placeholder: 'name@example.com',
+          defaultValue: defaultRecipientEmail
+        },
+        {
+          key: 'productName',
+          label: 'Product name',
+          type: 'text',
+          required: true,
+          defaultValue: defaultProductName
+        },
+        {
+          key: 'productUrl',
+          label: 'Product URL',
+          type: 'url',
+          required: true,
+          defaultValue: defaultProductUrl
+        },
+        {
+          key: 'originalPrice',
+          label: 'Original price',
+          type: 'number',
+          required: true,
+          step: '0.01',
+          defaultValue: '149900'
+        },
+        {
+          key: 'previousPrice',
+          label: 'Before price',
+          type: 'number',
+          required: true,
+          step: '0.01',
+          defaultValue: '129900'
+        },
+        {
+          key: 'currentPrice',
+          label: 'After price',
+          type: 'number',
+          required: true,
+          step: '0.01',
+          defaultValue: '119900'
+        }
+      ]
+    },
+    {
+      key: 'track_inactive',
+      label: 'Track inactive',
+      description: 'Send a styled test email for a tracker that can no longer find the product price.',
+      fields: [
+        {
+          key: 'recipientEmail',
+          label: 'Recipient email',
+          type: 'email',
+          required: true,
+          placeholder: 'name@example.com',
+          defaultValue: defaultRecipientEmail
+        },
+        {
+          key: 'productName',
+          label: 'Product name',
+          type: 'text',
+          required: true,
+          defaultValue: defaultProductName
+        },
+        {
+          key: 'productUrl',
+          label: 'Product URL',
+          type: 'url',
+          required: true,
+          defaultValue: defaultProductUrl
+        },
+        {
+          key: 'originalPrice',
+          label: 'Original price',
+          type: 'number',
+          required: true,
+          step: '0.01',
+          defaultValue: '149900'
+        }
+      ]
+    }
+  ].filter((definition) => TEMPLATE_RENDERERS[definition.key]);
+}
+
+function normalizeEmailTemplatePayload(templateKey, body = {}) {
+  const templateDefinitions = new Map(
+    buildEmailTemplateTestDefinitions({ email: '' }).map((definition) => [definition.key, definition])
+  );
+  const definition = templateDefinitions.get(templateKey);
+
+  if (!definition) {
+    throw createInvalidTemplateTestInputError('Unknown email template');
+  }
+
+  const recipientEmail = String(body.recipientEmail || '').trim();
+  const productName = String(body.productName || '').trim();
+  const productUrl = String(body.productUrl || '').trim();
+
+  if (!recipientEmail || !recipientEmail.includes('@')) {
+    throw createInvalidTemplateTestInputError('Recipient email is required');
+  }
+
+  if (!productName) {
+    throw createInvalidTemplateTestInputError('Product name is required');
+  }
+
+  try {
+    new URL(productUrl);
+  } catch (error) {
+    throw createInvalidTemplateTestInputError('A valid product URL is required');
+  }
+
+  const payload = {
+    recipientEmail,
+    productName,
+    productUrl
+  };
+
+  for (const field of definition.fields) {
+    if (field.type !== 'number') {
+      continue;
+    }
+
+    const rawValue = String(body[field.key] == null ? '' : body[field.key]).trim();
+    const parsedValue = Number(rawValue);
+    if (!Number.isFinite(parsedValue)) {
+      throw createInvalidTemplateTestInputError(`${field.label} must be a valid number`);
+    }
+
+    payload[field.key] = parsedValue;
+  }
+
+  return payload;
+}
+
+function createInvalidTemplateTestInputError(message) {
+  const error = new Error(message);
+  error.code = 'INVALID_TEMPLATE_TEST_INPUT';
+  return error;
 }

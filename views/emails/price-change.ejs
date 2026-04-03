@@ -1,0 +1,45 @@
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td>
+      <div style="display:inline-block;background-color:<%= accentColor %>;border-radius:999px;color:#ffffff;font-size:13px;font-weight:bold;line-height:1;padding:8px 14px;">
+        <span style="display:inline-block;margin-right:6px;"><%- arrowHtml %></span><%= changeLabel %>
+      </div>
+      <h1 style="color:#333333;font-size:28px;line-height:1.25;margin:18px 0 10px;"><%= headline %></h1>
+      <p style="color:#555555;font-size:16px;line-height:1.7;margin:0;">
+        We detected a new price for <strong><%= productName %></strong>.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f2eeee;border:1px solid #e0dada;border-radius:10px;">
+        <tr>
+          <td style="border-bottom:1px solid #ddd4d4;padding:14px 18px;width:45%;color:#666666;font-size:14px;font-weight:bold;text-transform:uppercase;">Before</td>
+          <td style="border-bottom:1px solid #ddd4d4;padding:14px 18px;color:#333333;font-size:20px;font-weight:bold;"><%= previousPriceFormatted %></td>
+        </tr>
+        <tr>
+          <td style="border-bottom:<%= showOriginalPrice ? '1px solid #ddd4d4' : '0' %>;padding:14px 18px;width:45%;color:#666666;font-size:14px;font-weight:bold;text-transform:uppercase;">Now</td>
+          <td style="border-bottom:<%= showOriginalPrice ? '1px solid #ddd4d4' : '0' %>;padding:14px 18px;color:<%= accentColor %>;font-size:24px;font-weight:bold;"><%= currentPriceFormatted %></td>
+        </tr>
+        <% if (showOriginalPrice) { %>
+          <tr>
+            <td style="padding:14px 18px;width:45%;color:#666666;font-size:14px;font-weight:bold;text-transform:uppercase;">Original</td>
+            <td style="padding:14px 18px;color:#333333;font-size:18px;font-weight:bold;"><%= originalPriceFormatted %></td>
+          </tr>
+        <% } %>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:24px;">
+      <a href="<%= productUrl %>" style="background-color:#ffb758;border-radius:8px;color:#333333;display:inline-block;font-size:16px;font-weight:bold;line-height:1;padding:14px 20px;text-decoration:none;">View product</a>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding-top:20px;">
+      <p style="color:#777777;font-size:13px;line-height:1.7;margin:0;word-break:break-word;">
+        Product link: <a href="<%= productUrl %>" style="color:#c26a00;text-decoration:none;"><%= productUrl %></a>
+      </p>
+    </td>
+  </tr>
+</table>

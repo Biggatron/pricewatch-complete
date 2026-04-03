@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <%- include('./partials/head'); %>
-  <link rel="stylesheet" href="/css/admin.css?v=20260328-2" type="text/css">
-  <link rel="stylesheet" href="/css/track.css?v=20260328-2" type="text/css">
+  <link rel="stylesheet" href="/css/admin.css?v=20260403-2" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260403-2" type="text/css">
 </head>
 <body class="body-container">
 
@@ -279,6 +279,14 @@
               </select>
             </label>
             <label>
+              <span>Deleted</span>
+              <select class="admin-input" name="track_deleted">
+                <option value="visible" <%= trackFilters.deleted === 'visible' ? 'selected' : '' %>>Visible only</option>
+                <option value="deleted" <%= trackFilters.deleted === 'deleted' ? 'selected' : '' %>>Deleted only</option>
+                <option value="all" <%= trackFilters.deleted === 'all' ? 'selected' : '' %>>All</option>
+              </select>
+            </label>
+            <label>
               <span>Sort</span>
               <select class="admin-input" name="track_sort">
                 <option value="modified_desc" <%= trackFilters.sort === 'modified_desc' ? 'selected' : '' %>>Recently changed</option>
@@ -318,11 +326,14 @@
                 </thead>
                 <tbody>
                   <% tracks.forEach((track) => { %>
-                    <tr class="admin-track-summary-row" data-track-row="<%= track.id %>" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
+                    <tr class="admin-track-summary-row <%= track.deleted ? 'admin-track-summary-row-deleted' : '' %>" data-track-row="<%= track.id %>" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
                       <td>
                         <div>
                           <span class="admin-track-name"><%= track.product_name %></span>
                           <span class="admin-track-inline-id">#<%= track.id %></span>
+                          <% if (track.deleted) { %>
+                            <span class="admin-track-status-badge">Deleted</span>
+                          <% } %>
                         </div>
                       </td>
                       <td>
@@ -366,14 +377,20 @@
                       <td class="hide-on-mobile"><%= track.last_modified_at ? new Date(track.last_modified_at).toLocaleDateString() : '-' %></td>
                       <td class="admin-actions-cell">
                         <div class="field-display admin-action-group admin-action-group-wrap">
-                          <button class="btn btn-small" onclick="editTrack(<%= track.id %>)">Edit</button>
-                          <button class="btn btn-small" onclick="updateTrackNow(<%= track.id %>)">Update</button>
+                          <% if (!track.deleted) { %>
+                            <button class="btn btn-small" onclick="editTrack(<%= track.id %>)">Edit</button>
+                            <button class="btn btn-small" onclick="updateTrackNow(<%= track.id %>)">Update</button>
+                          <% } else { %>
+                            <button class="btn btn-small admin-restore-btn" onclick="restoreTrack(<%= track.id %>)">Undelete</button>
+                          <% } %>
                           <button class="btn btn-small" onclick="viewTrackHtml(<%= track.id %>)">HTML</button>
                         </div>
-                        <div class="field-edit display-none admin-action-group">
-                          <button class="btn btn-small" onclick="saveTrack(<%= track.id %>)">Save</button>
-                          <button class="btn btn-small admin-cancel-btn" onclick="cancelEditTrack(<%= track.id %>)">Cancel</button>
-                        </div>
+                        <% if (!track.deleted) { %>
+                          <div class="field-edit display-none admin-action-group">
+                            <button class="btn btn-small" onclick="saveTrack(<%= track.id %>)">Save</button>
+                            <button class="btn btn-small admin-cancel-btn" onclick="cancelEditTrack(<%= track.id %>)">Cancel</button>
+                          </div>
+                        <% } %>
                       </td>
                     </tr>
                     <tr class="admin-track-detail-row display-none" data-track-detail-row="<%= track.id %>">
@@ -383,6 +400,9 @@
                             <strong>Original link:</strong>
                             <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
                           </p>
+                          <% if (track.deleted) { %>
+                            <p class="admin-track-subtext">This track has been soft deleted and is hidden from My tracks.</p>
+                          <% } %>
                           <%- include('partials/track-history-graph', { track }); %>
                         </div>
                       </td>
@@ -878,6 +898,34 @@
     } catch (error) {
       console.log(error);
       showToast('Failed to update track');
+    }
+  }
+
+  async function restoreTrack(trackId) {
+    const confirmed = window.confirm('Restore this deleted track? It will become visible in My tracks again.');
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/admin/tracks/${trackId}/restore`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        showToast(body && body.error ? body.error : 'Failed to restore track');
+        return;
+      }
+
+      showToast(`Track ${trackId} restored`);
+      window.location.reload();
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to restore track');
     }
   }
 

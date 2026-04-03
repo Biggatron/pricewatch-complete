@@ -11,6 +11,7 @@ const keys = require('./config/keys');
 const errorHandler = require('./utilities/errorHandler');
 const { ensureAppConfigTable } = require('./utilities/app-config');
 const { initializeLogger } = require('./utilities/logger');
+const { ensureTrackSoftDeleteColumn } = require('./utilities/track-soft-delete');
 
 initializeLogger();
 
@@ -82,11 +83,20 @@ server.listen(port, () => {
 })
 
 initializeAppConfig();
+initializeTrackSoftDelete();
 
 async function initializeAppConfig() {
   try {
     await ensureAppConfigTable();
   } catch (error) {
     console.error('[startup] Failed to initialize app_config table', error);
+  }
+}
+
+async function initializeTrackSoftDelete() {
+  try {
+    await ensureTrackSoftDeleteColumn();
+  } catch (error) {
+    console.error('[startup] Failed to initialize track soft delete column', error);
   }
 }

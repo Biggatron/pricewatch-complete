@@ -209,6 +209,18 @@
   white-space: nowrap;
 }
 
+.admin-track-status-badge {
+  background-color: #6f4f4f;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.45rem;
+  padding: 0.14rem 0.45rem;
+  vertical-align: middle;
+}
+
 .admin-user-chip {
   border-bottom: 1px dotted #888;
   color: #333;
@@ -267,6 +279,14 @@
   background-color: #7f7f7f;
 }
 
+.admin-restore-btn {
+  background-color: #5a8a5a;
+}
+
+.admin-restore-btn:hover {
+  background-color: #4c754c;
+}
+
 .btn-small {
   font-size: 0.9rem;
   padding: 0.4rem 0.6rem;
@@ -283,6 +303,10 @@
 
 .admin-track-summary-row:hover {
   background-color: #ececec;
+}
+
+.admin-track-summary-row-deleted {
+  opacity: 0.8;
 }
 
 .admin-track-summary-row:focus {

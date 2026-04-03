@@ -19,6 +19,7 @@ const {
   insertCrawlerRunItem
 } = require('./crawler-run-log');
 const { insertTrackHistoryEntry } = require('./track-history-log');
+const { ensureTrackSoftDeleteColumn } = require('./track-soft-delete');
 const MAX_MATCH_PRICE = 1000000000;
 const MAX_EMAIL_DELIVERY_ATTEMPTS = 3;
 const PREVIEW_OUTPUT_DIR = path.join(__dirname, '..', 'public', 'generated-previews');
@@ -410,8 +411,12 @@ async function getAndUpdatePrices(options = {}) {
   let processedTracks = false;
 
   try {
+    await ensureTrackSoftDeleteColumn();
     const result = await query(
-      `SELECT * FROM track WHERE active = true`
+      `SELECT *
+       FROM track
+       WHERE active = TRUE
+         AND deleted = FALSE`
     );
     processedTracks = true;
     console.info('[crawler] Loaded tracks for update', {
@@ -2093,6 +2098,8 @@ function getDomainFromURL(url) {
 
 
 async function addTracksToDatabase(tracks, res) {
+  await ensureTrackSoftDeleteColumn();
+
   console.info('[crawler] Saving tracks to database', {
     trackCount: tracks.length
   });
@@ -2161,8 +2168,15 @@ async function addTracksToDatabase(tracks, res) {
 }
 
 async function trackExists(track) {
+  await ensureTrackSoftDeleteColumn();
+
   let existingTrackResult = await query(
-    `SELECT * FROM track WHERE user_id = $1 and price_url = $2 ORDER BY created_at DESC`,
+    `SELECT *
+     FROM track
+     WHERE user_id = $1
+       AND price_url = $2
+       AND deleted = FALSE
+     ORDER BY created_at DESC`,
     [track.user_id, track.price_url]
   );
   return existingTrackResult.rows[0];

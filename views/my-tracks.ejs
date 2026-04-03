@@ -7,7 +7,7 @@
 
 <header>
   <%- include('partials/header', {navItem: 'my-tracks'}); %>
-  <link rel="stylesheet" href="/css/track.css" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260403-2" type="text/css">
 </header>
 
 <main>  
@@ -50,8 +50,11 @@
             <td colspan="6">
               <div class="track-detail-card">
                 <p class="track-detail-link-row">
-                  <strong>Original link:</strong>
-                  <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
+                  <span class="track-detail-link-content">
+                    <strong>Original link:</strong>
+                    <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
+                  </span>
+                  <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
                 </p>
                 <%- include('partials/track-history-graph', { track }); %>
               </div>
@@ -111,5 +114,41 @@
     detailRow.classList.toggle('display-none', !willExpand);
     summaryRow.classList.toggle('track-summary-row-expanded', willExpand);
     summaryRow.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
+  }
+
+  async function deleteTrack(trackId) {
+    const confirmed = window.confirm('Are you sure you wish to delete this track?');
+    if (!confirmed) {
+      return;
+    }
+
+    showLoader();
+
+    try {
+      const response = await fetch(`/track/${trackId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+      const body = await response.json().catch(() => null);
+
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+
+      if (response.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+
+      showToast(body && body.error ? body.error : 'Failed to delete track');
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to delete track');
+    } finally {
+      hideLoader();
+    }
   }
 </script>

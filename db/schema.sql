@@ -22,6 +22,7 @@ CREATE TABLE track (
     "user_id" integer,
     "email" varchar(256),
     "active" boolean,
+    "deleted" boolean NOT NULL DEFAULT FALSE,
     "created_at" timestamp,
     "last_modified_at" timestamp
 );

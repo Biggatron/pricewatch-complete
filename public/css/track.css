@@ -103,8 +103,26 @@ td {
 }
 
 .track-detail-link-row {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
   margin: 0 0 0.85rem;
   word-break: break-word;
+}
+
+.track-detail-link-content {
+  min-width: 0;
+}
+
+.track-delete-btn {
+  background-color: #b35a5a;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.track-delete-btn:hover {
+  background-color: #984747;
 }
 
 .track-history-graph-card {
@@ -176,6 +194,10 @@ tr.higher {
   }
   .hide-on-mobile {
     display: none;
+  }
+  .track-detail-link-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 @media (max-width: 400px) {

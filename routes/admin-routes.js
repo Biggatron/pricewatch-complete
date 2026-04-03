@@ -23,6 +23,7 @@ const {
   getCrawlerRunById,
   getCrawlerRunItems
 } = require('../utilities/crawler-run-log');
+const { ensureTrackSoftDeleteColumn } = require('../utilities/track-soft-delete');
 
 const authCheck = (req, res, next) => {
   if (!req.user) {
@@ -188,6 +189,8 @@ router.post('/emails/send-pending', authCheck, adminCheck, async (req, res, next
 
 router.post('/tracks/:id', authCheck, adminCheck, async (req, res, next) => {
   try {
+    await ensureTrackSoftDeleteColumn();
+
     const trackId = Number(req.params.id);
     const origPrice = Number(req.body.orig_price);
     const currPrice = Number(req.body.curr_price);
@@ -211,6 +214,10 @@ router.post('/tracks/:id', authCheck, adminCheck, async (req, res, next) => {
 
     if (!existingTrack) {
       return res.status(404).json({ error: 'Track not found' });
+    }
+
+    if (existingTrack.deleted) {
+      return res.status(409).json({ error: 'Deleted tracks cannot be edited' });
     }
 
     const result = await query(
@@ -261,6 +268,10 @@ router.post('/tracks/:id/update-now', authCheck, adminCheck, async (req, res, ne
       return res.status(404).json({ error: 'Track not found' });
     }
 
+    if (track.deleted) {
+      return res.status(409).json({ error: 'Deleted tracks cannot be updated' });
+    }
+
     const result = await crawler.updateSingleTrack(track, {
       triggerType: 'manual-single',
       triggeredBy: req.user
@@ -270,6 +281,55 @@ router.post('/tracks/:id/update-now', authCheck, adminCheck, async (req, res, ne
       message: 'Track update completed',
       runId: result.runId,
       result: result.itemResult
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/tracks/:id/restore', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    await ensureTrackSoftDeleteColumn();
+
+    const trackId = Number(req.params.id);
+    if (!Number.isInteger(trackId)) {
+      return res.status(400).json({ error: 'Invalid track id' });
+    }
+
+    const existingTrackResult = await query(
+      `SELECT *
+       FROM track
+       WHERE id = $1`,
+      [trackId]
+    );
+    const existingTrack = existingTrackResult.rows[0];
+
+    if (!existingTrack) {
+      return res.status(404).json({ error: 'Track not found' });
+    }
+
+    if (!existingTrack.deleted) {
+      return res.status(409).json({ error: 'Track is not deleted' });
+    }
+
+    const result = await query(
+      `UPDATE track
+       SET deleted = FALSE,
+           last_modified_at = $1
+       WHERE id = $2
+       RETURNING *`,
+      [new Date(), trackId]
+    );
+
+    console.info('[admin] Track restored', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email,
+      trackId
+    });
+
+    res.status(200).json({
+      message: 'Track restored',
+      track: result.rows[0]
     });
   } catch (error) {
     next(error);
@@ -381,6 +441,8 @@ router.get('/runs/:id', authCheck, adminCheck, async (req, res, next) => {
 module.exports = router;
 
 async function getAllTracksForAdmin(filters = getTrackAdminFilters()) {
+  await ensureTrackSoftDeleteColumn();
+
   const conditions = [];
   const params = [];
 
@@ -400,6 +462,12 @@ async function getAllTracksForAdmin(filters = getTrackAdminFilters()) {
     conditions.push(`track.active = $${params.length}`);
   }
 
+  if (filters.deleted === 'visible') {
+    conditions.push('track.deleted = FALSE');
+  } else if (filters.deleted === 'deleted') {
+    conditions.push('track.deleted = TRUE');
+  }
+
   params.push(filters.maxRows);
   const result = await query(
     `SELECT
@@ -411,6 +479,7 @@ async function getAllTracksForAdmin(filters = getTrackAdminFilters()) {
        track.product_name,
        track.user_id,
        track.email,
+       track.deleted,
        track.last_modified_at,
        user_account.name AS user_name
      FROM track
@@ -425,6 +494,8 @@ async function getAllTracksForAdmin(filters = getTrackAdminFilters()) {
 }
 
 async function getTrackById(trackId) {
+  await ensureTrackSoftDeleteColumn();
+
   const result = await query(
     `SELECT
        track.*,
@@ -559,6 +630,7 @@ function getTrackAdminFilters(queryParams = {}) {
   return {
     search: String(queryParams.track_search || '').trim(),
     active: normalizeSelectValue(queryParams.track_active, ['all', 'active', 'inactive'], 'all'),
+    deleted: normalizeSelectValue(queryParams.track_deleted, ['visible', 'deleted', 'all'], 'visible'),
     sort: normalizeSelectValue(
       queryParams.track_sort,
       ['modified_desc', 'modified_asc', 'product_asc', 'product_desc', 'curr_price_desc', 'curr_price_asc', 'user_asc', 'user_desc'],

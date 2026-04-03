@@ -2,15 +2,16 @@ const router = require('express').Router();
 const crawler = require('../utilities/crawler');
 const query = require('../db/db');
 const keys = require('../config/keys');
-const { getTrackHistoryMap } = require('../utilities/track-history-log');
+const { getTrackHistoryMap, insertTrackHistoryEntry } = require('../utilities/track-history-log');
 const { buildTrackHistoryGraphModel } = require('../utilities/track-history-graph');
+const { ensureTrackSoftDeleteColumn } = require('../utilities/track-soft-delete');
 
 const authCheck = (req, res, next) => {
-    if(!req.user){
-        res.redirect('/auth/login');
-    } else {
-        next();
-    }
+  if (!req.user) {
+    res.redirect('/auth/login');
+  } else {
+    next();
+  }
 };
 
 const adminCheck = (req, res, next) => {
@@ -21,14 +22,26 @@ const adminCheck = (req, res, next) => {
   next();
 };
 
+const apiAuthCheck = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Login required' });
+  }
+
+  next();
+};
+
 // New track landing page
 router.get('/', (req, res) => {
   res.render('new-track', { user: req.user });
 });
 
 // New track landing page
-router.get('/tracklist', authCheck, (req, res) => {
-  getTracks(req.user, res);
+router.get('/tracklist', authCheck, async (req, res, next) => {
+  try {
+    await getTracks(req.user, res);
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post('/preview', async (req, res) => {
@@ -53,127 +66,150 @@ router.post('/preview', async (req, res) => {
 });
 
 router.post('/', async (req, res, next) => {
-    console.log("New track posted in background...")
+  console.log('New track posted in background...');
 
-    const priceUrl = String((req.body && req.body.url) || '').trim();
-    const originalPrice = crawler.extractNumber(String((req.body && req.body.price) || ''));
-    const email = String((req.body && req.body.email) || (req.user && req.user.email) || '').trim();
+  const priceUrl = String((req.body && req.body.url) || '').trim();
+  const originalPrice = crawler.extractNumber(String((req.body && req.body.price) || ''));
+  const email = String((req.body && req.body.email) || (req.user && req.user.email) || '').trim();
 
-    if (!priceUrl) {
-      return res.status(400).json({ error: 'URL is required' });
-    }
-
-    if (!originalPrice) {
-      return res.status(400).json({ error: 'Price is required and must contain digits' });
-    }
-
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-
-    const trackRequest = {
-      price_url: priceUrl,
-      orig_price: originalPrice,
-      email,
-      user_id: req.user ? req.user.id : null
-    };
-
-    try {
-      await crawler.findAndSavePrices(trackRequest, false, res);
-    } catch (error) {
-      next(error);
-    }
-  });
-  
-  router.post('/update-prices', authCheck, adminCheck, (req, res) => {
-    console.log("Updating prices in background...")
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.status(200).send('Track update job started');
-    crawler.updatePrices({
-      triggerType: 'manual',
-      triggeredBy: req.user
-    });
-  });
-  
-  router.delete('/*', (req, res) => {
-    console.log('delete track route hit')
-    deleteTrack(res, req);
-  });
-
-  async function checkIfTrackExists( trackRequest, res) {
-    console.log(`Getting track with url ${trackRequest.price_url } and for user: ${trackRequest.user_id}`)
-    const result = await query(
-      `SELECT * FROM track WHERE user_id = ${user.id} and price_url = ${trackRequest.price_url} ORDER BY created_at DESC`
-    );
-    let track = result.rows[0];
-    if (track) {
-      if (track.active) {
-        res.status(404).json({error: `You are already tracking this price`})
-        return;
-      } else {
-        trackRequest.action = 'update';
-      }
-    } 
-    return trackRequest;
+  if (!priceUrl) {
+    return res.status(400).json({ error: 'URL is required' });
   }
 
-  async function getTracks(user, res) {
-    console.info('[track] Loading tracks for user', { userId: user.id });
-    const result = await query(
-      `SELECT * FROM track WHERE user_id = ${user.id} ORDER BY last_modified_at DESC`
-    );
-    const historyMap = await getTrackHistoryMap(result.rows.map((track) => track.id));
-    const tracksWithHistory = result.rows.map((track) => ({
-      ...track,
-      historyEntries: historyMap.get(track.id) || [],
-      historyGraph: buildTrackHistoryGraphModel(track, historyMap.get(track.id) || [])
-    }));
-    console.info('[track] Tracks loaded', {
-      userId: user.id,
-      trackCount: tracksWithHistory.length
-    });
-    res.render('my-tracks', { user: user, tracks: tracksWithHistory });
+  if (!originalPrice) {
+    return res.status(400).json({ error: 'Price is required and must contain digits' });
   }
 
-  async function deleteTrack(res, req) {
-    let trackId = req.params[0];
-    let user = req.user;
-    
-    const getTrackResult = await query(
-        `SELECT * FROM track WHERE id = '${trackId}'`
-    );
-    let track = getTrackResult.rows[0];
-    if (!track) {
-        res.status(404).json({error: `Track ${trackId} does not exist`})
-        return;
-    }
-    if (!user) {
-        res.status(404).json({error: `User has to be logged on to delete track`})
-        return;
-    }
-    if (track.user_id === user.id) {
-        // Delete track
-        const deleteTrackResult = await query(
-            `DELETE FROM track WHERE id = '${trackId}'`
-        );
-        console.log({
-            deleteTrackResult: deleteTrackResult
-        })
-        const getDeleteTrackResult = await query(
-            `SELECT * FROM track WHERE id = '${trackId}'`
-        );
-        let track = getDeleteTrackResult.rows[0];
-        if (track) {
-            res.sendStatus(404).json({error: `Failed to delete track ${trackId}`})
-            return;
-        } else {
-            res.sendStatus(200);
-            return;
-        }
-    } else {
-        res.status(404).json({error: 'user.id does not match track.user_id'})
-        console.log(`user ${user.id} tried to delete track owned by ${track.user_id}`)
-    }
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const trackRequest = {
+    price_url: priceUrl,
+    orig_price: originalPrice,
+    email,
+    user_id: req.user ? req.user.id : null
+  };
+
+  try {
+    await crawler.findAndSavePrices(trackRequest, false, res);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/update-prices', authCheck, adminCheck, (req, res) => {
+  console.log('Updating prices in background...');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(200).send('Track update job started');
+  crawler.updatePrices({
+    triggerType: 'manual',
+    triggeredBy: req.user
+  });
+});
+
+router.delete('/:id', apiAuthCheck, async (req, res, next) => {
+  try {
+    await deleteTrack(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function getTracks(user, res) {
+  await ensureTrackSoftDeleteColumn();
+
+  console.info('[track] Loading tracks for user', { userId: user.id });
+  const result = await query(
+    `SELECT *
+     FROM track
+     WHERE user_id = $1
+       AND deleted = FALSE
+     ORDER BY last_modified_at DESC, id DESC`,
+    [user.id]
+  );
+  const historyMap = await getTrackHistoryMap(result.rows.map((track) => track.id));
+  const tracksWithHistory = result.rows.map((track) => ({
+    ...track,
+    historyEntries: historyMap.get(track.id) || [],
+    historyGraph: buildTrackHistoryGraphModel(track, historyMap.get(track.id) || [])
+  }));
+  console.info('[track] Tracks loaded', {
+    userId: user.id,
+    trackCount: tracksWithHistory.length
+  });
+  res.render('my-tracks', { user, tracks: tracksWithHistory });
+}
+
+async function deleteTrack(req, res) {
+  await ensureTrackSoftDeleteColumn();
+
+  const trackId = Number(req.params.id);
+  const user = req.user;
+
+  if (!Number.isInteger(trackId)) {
+    return res.status(400).json({ error: 'Invalid track id' });
+  }
+
+  const getTrackResult = await query(
+    `SELECT *
+     FROM track
+     WHERE id = $1
+       AND deleted = FALSE`,
+    [trackId]
+  );
+  const track = getTrackResult.rows[0];
+
+  if (!track) {
+    return res.status(404).json({ error: `Track ${trackId} does not exist` });
+  }
+
+  if (track.user_id !== user.id) {
+    console.warn('[track] User tried to delete track owned by another user', {
+      actingUserId: user.id,
+      trackId,
+      ownerUserId: track.user_id
+    });
+    return res.status(403).json({ error: 'You can only delete your own tracks' });
+  }
+
+  const deletedAt = new Date();
+  const deleteTrackResult = await query(
+    `UPDATE track
+     SET deleted = TRUE,
+         active = FALSE,
+         last_modified_at = $1
+     WHERE id = $2
+       AND user_id = $3
+       AND deleted = FALSE
+     RETURNING *`,
+    [deletedAt, trackId, user.id]
+  );
+
+  const deletedTrack = deleteTrackResult.rows[0];
+  if (!deletedTrack) {
+    return res.status(404).json({ error: `Failed to delete track ${trackId}` });
+  }
+
+  if (Boolean(track.active)) {
+    await insertTrackHistoryEntry({
+      trackId,
+      priceBefore: track.curr_price,
+      priceAfter: track.curr_price,
+      active: false,
+      changedAt: deletedAt
+    });
+  }
+
+  console.info('[track] Track soft deleted', {
+    userId: user.id,
+    trackId
+  });
+
+  return res.status(200).json({
+    message: 'Track deleted',
+    trackId
+  });
 }
 
 module.exports = router;

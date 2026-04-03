@@ -1,0 +1,62 @@
+<div class="track-history-graph-card">
+  <svg
+    class="track-history-graph"
+    viewBox="0 0 <%= track.historyGraph.width %> <%= track.historyGraph.height %>"
+    role="img"
+    aria-label="Track price history graph">
+    <line
+      class="track-history-axis"
+      x1="<%= track.historyGraph.chartLeft %>"
+      y1="<%= track.historyGraph.chartTop %>"
+      x2="<%= track.historyGraph.chartLeft %>"
+      y2="<%= track.historyGraph.chartBottom %>"></line>
+    <line
+      class="track-history-axis"
+      x1="<%= track.historyGraph.chartLeft %>"
+      y1="<%= track.historyGraph.chartBottom %>"
+      x2="<%= track.historyGraph.chartRight %>"
+      y2="<%= track.historyGraph.chartBottom %>"></line>
+
+    <% track.historyGraph.yAxisLabels.forEach((label) => { %>
+      <line
+        class="track-history-grid"
+        x1="<%= track.historyGraph.chartLeft %>"
+        y1="<%= label.y %>"
+        x2="<%= track.historyGraph.chartRight %>"
+        y2="<%= label.y %>"></line>
+      <text
+        class="track-history-y-label"
+        x="<%= track.historyGraph.chartLeft - 12 %>"
+        y="<%= label.y + 4 %>"
+        text-anchor="end"><%= label.text %></text>
+    <% }); %>
+
+    <% track.historyGraph.changeMarkers.forEach((marker) => { %>
+      <line
+        class="track-history-grid track-history-change-marker"
+        x1="<%= marker.x %>"
+        y1="<%= track.historyGraph.chartTop %>"
+        x2="<%= marker.x %>"
+        y2="<%= track.historyGraph.chartBottom %>"></line>
+      <line
+        class="track-history-step-vertical"
+        x1="<%= marker.x %>"
+        y1="<%= marker.fromY %>"
+        x2="<%= marker.x %>"
+        y2="<%= marker.toY %>"></line>
+    <% }); %>
+
+    <path class="track-history-step-line" d="<%= track.historyGraph.linePath %>"></path>
+
+    <text
+      class="track-history-x-label"
+      x="<%= track.historyGraph.chartLeft %>"
+      y="<%= track.historyGraph.height - 10 %>"
+      text-anchor="start"><%= track.historyGraph.startLabel %></text>
+    <text
+      class="track-history-x-label"
+      x="<%= track.historyGraph.chartRight %>"
+      y="<%= track.historyGraph.height - 10 %>"
+      text-anchor="end"><%= track.historyGraph.endLabel %></text>
+  </svg>
+</div>

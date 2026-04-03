@@ -1,7 +1,31 @@
+.preview-container {
+  width: min(1100px, 95%);
+  margin: 1rem auto 2rem;
+}
+
+.preview-status {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
 iframe {
   width: 100%;
   flex: 1 1 auto;
   border: none;
+  min-height: 70vh;
+  background-color: #fff;
+}
+
+.preview-image-link {
+  display: block;
+}
+
+.preview-image {
+  display: block;
+  width: 100%;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background-color: #fff;
 }
 
 /****************************/
@@ -49,6 +73,82 @@ th {
 td {
   padding: 8px;
   border: 1px solid;
+}
+
+.track-summary-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.track-summary-row:hover {
+  background-color: #ececec;
+}
+
+.track-summary-row:focus {
+  outline: none;
+  background-color: #ececec;
+}
+
+.track-summary-title {
+  font-weight: 600;
+}
+
+.track-detail-row td {
+  background-color: #f4f4f4;
+  padding: 0;
+}
+
+.track-detail-card {
+  padding: 0.9rem 1rem 1rem;
+}
+
+.track-detail-link-row {
+  margin: 0 0 0.85rem;
+  word-break: break-word;
+}
+
+.track-history-graph-card {
+  background-color: white;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  overflow: hidden;
+  padding: 0.35rem 0.35rem 0.1rem;
+}
+
+.track-history-graph {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.track-history-axis {
+  stroke: #929292;
+  stroke-width: 1;
+}
+
+.track-history-grid {
+  stroke: #e3e3e3;
+  stroke-width: 1;
+}
+
+.track-history-change-marker {
+  stroke: #d6dceb;
+}
+
+.track-history-step-line,
+.track-history-step-vertical {
+  fill: none;
+  stroke: #68b9f0;
+  stroke-linejoin: miter;
+  stroke-linecap: square;
+  stroke-width: 3;
+}
+
+.track-history-y-label,
+.track-history-x-label {
+  fill: #666;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 /* Alternate row colors */

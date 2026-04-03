@@ -8,6 +8,12 @@ const {
   getAppConfigRow,
   setAppConfig
 } = require('../utilities/app-config');
+const { isValidCronExpression } = require('../utilities/cron-util');
+const { JOB_DEFINITIONS, getJobDefinition } = require('../utilities/job-definitions');
+const { runJob, startJob } = require('../utilities/job-runner');
+const { getJobScheduleSummaries } = require('../utilities/job-schedule-log');
+const { getTrackHistoryMap, insertTrackHistoryEntry } = require('../utilities/track-history-log');
+const { buildTrackHistoryGraphModel } = require('../utilities/track-history-graph');
 const {
   getRecentCrawlerFailureLogs,
   getCrawlerFailureLogById
@@ -39,6 +45,12 @@ const adminCheck = (req, res, next) => {
       latestRun: null,
       tracks: [],
       appConfigs: [],
+      jobSettings: [],
+      jobScheduleSummaries: [],
+      previewCacheSummary: {
+        screenshotDirectory: '',
+        screenshotFiles: []
+      },
       recentFailedTrackLogs: [],
       recentEmailLogs: [],
       activeTab: getActiveAdminTab(req.query.tab)
@@ -54,15 +66,24 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
     const failedTrackFilters = getFailedTrackLogFilters(req.query);
     const emailFilters = getEmailLogFilters(req.query);
 
-    const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs] = await Promise.all([
+    const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs, jobScheduleSummaries] = await Promise.all([
       readRecentLogs(),
       getRecentCrawlerFailureLogs(),
       getRecentCrawlerRuns(),
       getAllTracksForAdmin(trackFilters),
       getAllAppConfig(),
       getRecentFailedTrackLogs(failedTrackFilters),
-      getRecentEmailLogs(emailFilters)
+      getRecentEmailLogs(emailFilters),
+      getJobScheduleSummaries()
     ]);
+    const previewCacheSummary = await crawler.getPreviewCacheSummary();
+
+    const trackHistoryMap = await getTrackHistoryMap(tracks.map((track) => track.id));
+    const tracksWithHistory = tracks.map((track) => ({
+      ...track,
+      historyEntries: trackHistoryMap.get(track.id) || [],
+      historyGraph: buildTrackHistoryGraphModel(track, trackHistoryMap.get(track.id) || [])
+    }));
 
     res.render('admin', {
       user: req.user,
@@ -70,8 +91,11 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       failedUpdates,
       recentRuns,
       latestRun: recentRuns[0] || null,
-      tracks,
+      tracks: tracksWithHistory,
       appConfigs,
+      jobSettings: buildJobSettings(appConfigs),
+      jobScheduleSummaries,
+      previewCacheSummary,
       recentFailedTrackLogs,
       recentEmailLogs,
       trackFilters,
@@ -80,6 +104,42 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       activeTab,
       logFilePath: getLogFilePath(),
       accessDenied: false
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/jobs/:jobKey/run', authCheck, adminCheck, async (req, res, next) => {
+  try {
+    const jobKey = String(req.params.jobKey || '').trim();
+    const job = getJobDefinition(jobKey);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const result = await startJob(jobKey, {
+      triggerType: 'manual',
+      triggeredBy: req.user,
+      ignoreSchedule: jobKey === 'email_delivery'
+    });
+
+    if (result.status === 'locked') {
+      return res.status(409).json({
+        error: `${job.displayName} is already running`
+      });
+    }
+
+    console.info('[admin] Job executed manually', {
+      adminUserId: req.user.id,
+      adminEmail: req.user.email,
+      jobKey,
+      resultStatus: result.status
+    });
+
+    res.status(202).json({
+      message: `${job.displayName} job started`,
+      result
     });
   } catch (error) {
     next(error);
@@ -101,7 +161,17 @@ router.post('/logs/clear', authCheck, adminCheck, async (req, res, next) => {
 
 router.post('/emails/send-pending', authCheck, adminCheck, async (req, res, next) => {
   try {
-    const summary = await crawler.deliverPendingEmails();
+    const jobResult = await runJob('email_delivery', {
+      triggerType: 'manual',
+      triggeredBy: req.user,
+      ignoreSchedule: true
+    });
+
+    if (jobResult.status === 'locked') {
+      return res.status(409).json({ error: 'Email delivery is already running' });
+    }
+
+    const summary = jobResult.summary || {};
     console.info('[admin] Pending emails processed', {
       adminUserId: req.user.id,
       adminEmail: req.user.email,
@@ -131,6 +201,18 @@ router.post('/tracks/:id', authCheck, adminCheck, async (req, res, next) => {
       return res.status(400).json({ error: 'Original price and current price must be valid numbers' });
     }
 
+    const existingTrackResult = await query(
+      `SELECT *
+       FROM track
+       WHERE id = $1`,
+      [trackId]
+    );
+    const existingTrack = existingTrackResult.rows[0];
+
+    if (!existingTrack) {
+      return res.status(404).json({ error: 'Track not found' });
+    }
+
     const result = await query(
       `UPDATE track
        SET orig_price = $1,
@@ -142,8 +224,16 @@ router.post('/tracks/:id', authCheck, adminCheck, async (req, res, next) => {
       [origPrice, currPrice, active, new Date(), trackId]
     );
 
-    if (!result.rows[0]) {
-      return res.status(404).json({ error: 'Track not found' });
+    if (
+      Number(existingTrack.curr_price) !== currPrice ||
+      Boolean(existingTrack.active) !== active
+    ) {
+      await insertTrackHistoryEntry({
+        trackId,
+        priceBefore: existingTrack.curr_price,
+        priceAfter: currPrice,
+        active
+      });
     }
 
     console.info('[admin] Track updated', {
@@ -196,6 +286,10 @@ router.post('/config', authCheck, adminCheck, async (req, res, next) => {
     const existingConfig = await getAppConfigRow(configKey);
     if (!existingConfig) {
       return res.status(404).json({ error: 'Config entry not found' });
+    }
+
+    if (isCronConfigKey(configKey) && !isValidCronExpression(req.body.value)) {
+      return res.status(400).json({ error: 'Invalid cron expression. Expected 5 fields like */5 * * * *' });
     }
 
     const normalizedValue = normalizeConfigValue(req.body.value, existingConfig.data_type);
@@ -450,8 +544,10 @@ function normalizeConfigValue(value, dataType) {
 function getActiveAdminTab(tab) {
   const allowedTabs = new Set([
     'overview',
+    'jobs',
     'tracks',
     'config',
+    'cache',
     'service-logs',
     'failed-tracks',
     'emails'
@@ -565,4 +661,25 @@ function getEmailSortClause(sort, effectiveStatusExpression = 'status') {
   };
 
   return emailSortMap[sort] || emailSortMap.created_desc;
+}
+
+function isCronConfigKey(configKey) {
+  return JOB_DEFINITIONS.some((job) => job.cronConfigKey === configKey);
+}
+
+function buildJobSettings(appConfigs) {
+  const configMap = new Map(appConfigs.map((config) => [config.config_key, config]));
+
+  return JOB_DEFINITIONS.map((job) => {
+    const enabledConfig = configMap.get(job.enabledConfigKey);
+    const cronConfig = configMap.get(job.cronConfigKey);
+
+    return {
+      key: job.key,
+      displayName: job.displayName,
+      description: job.description,
+      enabled: enabledConfig ? Boolean(enabledConfig.parsed_value) : job.defaultEnabled,
+      cronExpression: cronConfig && cronConfig.value ? cronConfig.value : job.defaultCron
+    };
+  });
 }

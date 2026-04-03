@@ -42,6 +42,7 @@ CREATE TABLE email_logs (
     "sent_at" timestamp,
     "attempt_count" integer NOT NULL DEFAULT 0,
     "last_attempt_at" timestamp,
+    "next_send_at" timestamp,
     "created_at" timestamp
 );
 
@@ -129,9 +130,56 @@ CREATE TABLE crawler_run_items (
     "created_at" timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE preview_screenshot_cache (
+    "id" serial primary key,
+    "url" varchar(2048) NOT NULL UNIQUE,
+    "file_name" varchar(255) NOT NULL UNIQUE,
+    "file_path" varchar(1024) NOT NULL,
+    "public_path" varchar(1024) NOT NULL,
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "last_accessed_at" timestamp NOT NULL DEFAULT now(),
+    "expires_at" timestamp NOT NULL
+);
+
+CREATE TABLE scheduled_job_runs (
+    "id" serial primary key,
+    "job_key" varchar(64) NOT NULL,
+    "job_name" varchar(128) NOT NULL,
+    "cron_expression" text,
+    "status" varchar(32) NOT NULL DEFAULT 'pending',
+    "run_after_time" timestamp NOT NULL,
+    "actual_run_time" timestamp,
+    "error_reason" text,
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE track_change_history (
+    "id" serial primary key,
+    "track_id" integer NOT NULL,
+    "price_before" decimal,
+    "price_after" decimal,
+    "active" boolean,
+    "changed_at" timestamp NOT NULL DEFAULT now()
+);
+
+CREATE INDEX preview_screenshot_cache_expires_at_idx
+    ON preview_screenshot_cache ("expires_at");
+
+CREATE INDEX scheduled_job_runs_job_key_idx
+    ON scheduled_job_runs ("job_key", "run_after_time" DESC, "id" DESC);
+
+CREATE UNIQUE INDEX scheduled_job_runs_pending_job_key_idx
+    ON scheduled_job_runs ("job_key")
+    WHERE "status" = 'pending';
+
+CREATE INDEX track_change_history_track_id_changed_at_idx
+    ON track_change_history ("track_id", "changed_at" DESC, "id" DESC);
+
 -- Add foreign keys
 ALTER TABLE "track" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
 ALTER TABLE "email_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
+ALTER TABLE "track_change_history" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
 ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("track_id") REFERENCES "track" ("id");
 ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");
 ALTER TABLE "crawler_failure_logs" ADD FOREIGN KEY ("run_id") REFERENCES "crawler_runs" ("id");

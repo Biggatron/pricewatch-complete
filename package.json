@@ -6,7 +6,12 @@
   "scripts": {
     "start": "nodemon app.js",
     "watch:sass": "sass --no-source-map --watch scss/:public/css/",
-    "setup": "node db/setup.js"
+    "setup": "node db/setup.js",
+    "db:clear-transactional": "node db/clear-transactional-data.js",
+    "job:dispatch": "node scripts/cron-dispatcher.js",
+    "job:crawler": "node scripts/run-job.js crawler",
+    "job:preview-cleanup": "node scripts/run-job.js preview_cleanup",
+    "job:email-delivery": "node scripts/run-job.js email_delivery"
   },
   "author": "Birgir Óli Snorrason",
   "license": "ISC",

@@ -276,6 +276,38 @@
   line-height: 1.25;
 }
 
+.admin-track-summary-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.admin-track-summary-row:hover {
+  background-color: #ececec;
+}
+
+.admin-track-summary-row:focus {
+  outline: none;
+  background-color: #ececec;
+}
+
+.admin-track-name {
+  font-weight: 600;
+}
+
+.admin-track-detail-row td {
+  background-color: #f4f4f4;
+  padding: 0;
+}
+
+.admin-track-detail-card {
+  padding: 0.9rem 1rem 1rem;
+}
+
+.admin-track-detail-link-row {
+  margin: 0 0 0.85rem;
+  word-break: break-word;
+}
+
 .admin-modal {
   inset: 0;
   position: fixed;

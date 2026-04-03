@@ -2,6 +2,8 @@ const router = require('express').Router();
 const crawler = require('../utilities/crawler');
 const query = require('../db/db');
 const keys = require('../config/keys');
+const { getTrackHistoryMap } = require('../utilities/track-history-log');
+const { buildTrackHistoryGraphModel } = require('../utilities/track-history-graph');
 
 const authCheck = (req, res, next) => {
     if(!req.user){
@@ -29,17 +31,58 @@ router.get('/tracklist', authCheck, (req, res) => {
   getTracks(req.user, res);
 });
 
-router.post('/', (req, res) => {
-    //console.log(req.body);
+router.post('/preview', async (req, res) => {
+  const inputUrl = String((req.body && req.body.url) || '').trim();
+  if (!inputUrl) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    const preview = await crawler.getUrlPreview(inputUrl);
+    res.status(200).json(preview);
+  } catch (error) {
+    const statusCode = error && error.code === 'INVALID_PREVIEW_URL' ? 400 : 500;
+    console.error('[track] Failed to build preview', {
+      url: inputUrl,
+      error
+    });
+    res.status(statusCode).json({
+      error: error && error.message ? error.message : 'Failed to load preview'
+    });
+  }
+});
+
+router.post('/', async (req, res, next) => {
     console.log("New track posted in background...")
-    let trackRequest = {
-      price_url: req.body.url,
-      orig_price: crawler.extractNumber(req.body.price),
-      email: req.body.email,
-      user_id: req.user.id
+
+    const priceUrl = String((req.body && req.body.url) || '').trim();
+    const originalPrice = crawler.extractNumber(String((req.body && req.body.price) || ''));
+    const email = String((req.body && req.body.email) || (req.user && req.user.email) || '').trim();
+
+    if (!priceUrl) {
+      return res.status(400).json({ error: 'URL is required' });
     }
-    //trackRequest = checkIfTrackExists(trackRequest, res);
-    crawler.findAndSavePrices(trackRequest, false, res);
+
+    if (!originalPrice) {
+      return res.status(400).json({ error: 'Price is required and must contain digits' });
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const trackRequest = {
+      price_url: priceUrl,
+      orig_price: originalPrice,
+      email,
+      user_id: req.user ? req.user.id : null
+    };
+
+    try {
+      await crawler.findAndSavePrices(trackRequest, false, res);
+    } catch (error) {
+      next(error);
+    }
   });
   
   router.post('/update-prices', authCheck, adminCheck, (req, res) => {
@@ -79,11 +122,17 @@ router.post('/', (req, res) => {
     const result = await query(
       `SELECT * FROM track WHERE user_id = ${user.id} ORDER BY last_modified_at DESC`
     );
+    const historyMap = await getTrackHistoryMap(result.rows.map((track) => track.id));
+    const tracksWithHistory = result.rows.map((track) => ({
+      ...track,
+      historyEntries: historyMap.get(track.id) || [],
+      historyGraph: buildTrackHistoryGraphModel(track, historyMap.get(track.id) || [])
+    }));
     console.info('[track] Tracks loaded', {
       userId: user.id,
-      trackCount: result.rows.length
+      trackCount: tracksWithHistory.length
     });
-    res.render('my-tracks', { user: user, tracks: result.rows });
+    res.render('my-tracks', { user: user, tracks: tracksWithHistory });
   }
 
   async function deleteTrack(res, req) {

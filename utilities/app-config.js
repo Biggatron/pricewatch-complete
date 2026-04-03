@@ -1,26 +1,15 @@
 const query = require('../db/db');
 const constants = require('../config/const');
 const keys = require('../config/keys');
+const { getDefaultJobConfigEntries } = require('./job-definitions');
 
 let tableReadyPromise = null;
+const HIDDEN_CONFIG_KEYS = new Set([
+  'crawler.schedule.enabled',
+  'crawler.schedule.interval_ms'
+]);
 
 const defaultAppConfig = [
-  {
-    config_key: 'crawler.schedule.enabled',
-    category: 'crawler',
-    value: 'true',
-    data_type: 'boolean',
-    description: 'Turns the scheduled crawler on or off.',
-    value_help: 'Checkbox. Turn off to pause automatic crawl runs without stopping the app.'
-  },
-  {
-    config_key: 'crawler.schedule.interval_ms',
-    category: 'crawler',
-    value: String(constants.crawler.intervalTime),
-    data_type: 'integer',
-    description: 'How often the scheduled crawler should run, in milliseconds.',
-    value_help: 'Whole number greater than 0. Example: 86400000 = 24 hours.'
-  },
   {
     config_key: 'crawler.html_min_match_size',
     category: 'crawler',
@@ -28,6 +17,30 @@ const defaultAppConfig = [
     data_type: 'integer',
     description: 'Minimum amount of surrounding HTML used by the fallback regex matcher.',
     value_help: 'Whole number greater than 0. Smaller values make matching looser, larger values make matching stricter.'
+  },
+  {
+    config_key: 'preview.screenshot_cache_duration_ms',
+    category: 'preview',
+    value: String(constants.preview.screenshotCacheDurationMs),
+    data_type: 'integer',
+    description: 'How long a generated screenshot preview stays cached before cleanup can remove it.',
+    value_help: 'Whole number greater than 0. Example: 7200000 = 2 hours. Accessing a cached screenshot resets its expiry.'
+  },
+  {
+    config_key: 'preview.post_navigation_delay_ms',
+    category: 'preview',
+    value: String(constants.preview.postNavigationDelayMs),
+    data_type: 'integer',
+    description: 'Extra wait time after DOM content loads before capturing a preview screenshot.',
+    value_help: 'Whole number greater than or equal to 0. Example: 150 = 150 milliseconds.'
+  },
+  {
+    config_key: 'preview.post_banner_delay_ms',
+    category: 'preview',
+    value: String(constants.preview.postBannerDelayMs),
+    data_type: 'integer',
+    description: 'Extra wait time after dismissing a cookie banner before capturing a preview screenshot.',
+    value_help: 'Whole number greater than or equal to 0. Example: 250 = 250 milliseconds.'
   },
   {
     config_key: 'email.send_enabled',
@@ -44,6 +57,14 @@ const defaultAppConfig = [
     data_type: 'string',
     description: 'Controls whether outgoing mail uses SMTP or Amazon SES.',
     value_help: 'Allowed values: smtp, ses. Defaults to smtp outside production and ses in production.'
+  },
+  {
+    config_key: 'email.retry_delay_ms',
+    category: 'email',
+    value: String(constants.email.retryDelayMs),
+    data_type: 'integer',
+    description: 'Wait time before retrying a failed email delivery.',
+    value_help: 'Whole number greater than or equal to 0. Example: 900000 = 15 minutes.'
   },
   {
     config_key: 'email.ses_address',
@@ -100,7 +121,8 @@ const defaultAppConfig = [
     data_type: 'boolean',
     description: 'When enabled, HTML snapshots are only saved for failures.',
     value_help: 'Checkbox. When disabled, snapshots are saved whenever the related save flag is enabled.'
-  }
+  },
+  ...getDefaultJobConfigEntries()
 ];
 
 async function ensureAppConfigTable() {
@@ -255,10 +277,12 @@ async function getAllAppConfig() {
      ORDER BY category ASC NULLS LAST, config_key ASC`
   );
 
-  return result.rows.map((row) => ({
-    ...row,
-    parsed_value: parseAppConfigValue(row, null)
-  }));
+  return result.rows
+    .filter((row) => !HIDDEN_CONFIG_KEYS.has(row.config_key))
+    .map((row) => ({
+      ...row,
+      parsed_value: parseAppConfigValue(row, null)
+    }));
 }
 
 function parseAppConfigValue(row, fallbackValue) {

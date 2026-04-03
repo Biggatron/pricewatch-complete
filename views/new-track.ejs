@@ -28,7 +28,13 @@
     </div>
     <button class="btn" onClick="trackPrice()">Track Price</button>
   </div>
-  <iframe id="productIframe" title="Price Selection" width="100%" height="auto" src=""></iframe>
+  <div id="previewContainer" class="preview-container display-none">
+    <p id="previewStatus" class="preview-status">Enter a URL to load a preview.</p>
+    <iframe id="productIframe" class="display-none" title="Price Selection" width="100%" height="auto" src=""></iframe>
+    <a id="productPreviewImageLink" class="preview-image-link display-none" href="" target="_blank" rel="noreferrer">
+      <img id="productPreviewImage" class="preview-image" alt="Product preview screenshot">
+    </a>
+  </div>
 </main>
 
 
@@ -66,6 +72,15 @@
 
 <script>
   let loaderEl = document.getElementById("loader");
+  const urlInputEl = document.getElementById("url");
+  const previewContainerEl = document.getElementById("previewContainer");
+  const previewStatusEl = document.getElementById("previewStatus");
+  const productIframeEl = document.getElementById("productIframe");
+  const productPreviewImageEl = document.getElementById("productPreviewImage");
+  const productPreviewImageLinkEl = document.getElementById("productPreviewImageLink");
+  let previewDebounceTimer = null;
+  let previewAbortController = null;
+  let previewRequestId = 0;
 
   let user;
   user = '<%- JSON.stringify(user) %>';
@@ -79,11 +94,26 @@
 
 
   /* Event listener */
-  document.getElementById("url").addEventListener('input', setIframeUrl);
+  urlInputEl.addEventListener('input', queuePreviewLoad);
 
   /* Function */
-  function setIframeUrl() {
-    document.getElementById("productIframe").src = this.value;
+  function queuePreviewLoad() {
+    const url = this.value.trim();
+
+    clearTimeout(previewDebounceTimer);
+    if (previewAbortController) {
+      previewAbortController.abort();
+      previewAbortController = null;
+    }
+
+    if (!url) {
+      clearPreview();
+      return;
+    }
+
+    previewDebounceTimer = setTimeout(() => {
+      loadPreview(url);
+    }, 250);
   }
   
   function showLoader() {
@@ -117,9 +147,11 @@
         }
       });
       hideLoader();
-      //let newTrack = await response.body;
+      const responseBody = await response.json().catch(() => null);
       if (response.status === 201) {  
         showToast('Track added successfully')
+      } else if (response.status === 400) {
+        showToast(responseBody && responseBody.error ? responseBody.error : 'Invalid track input')
       } else if (response.status === 401) {
         console.log('status 401')
         window.location.href = "/pages/login";
@@ -130,8 +162,110 @@
       }
     } catch (err) {
       hideLoader();
-      showToast('something went wrong (check console log)')
+      showToast('something went wrong')
       console.log(err)
     } 
+  }
+
+  async function loadPreview(url) {
+    if (!isValidHttpUrl(url)) {
+      showPreviewMessage('Enter a valid http(s) URL to load a preview.');
+      return;
+    }
+
+    const requestId = ++previewRequestId;
+    previewAbortController = new AbortController();
+    showPreviewMessage('Loading preview...');
+
+    try {
+      const response = await fetch('/track/preview', {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+        headers: {
+          "Content-type": "application/json; charset=UTF-8"
+        },
+        signal: previewAbortController.signal
+      });
+
+      const body = await response.json().catch(() => null);
+      if (requestId !== previewRequestId) {
+        return;
+      }
+
+      if (!response.ok) {
+        showPreviewMessage(body && body.error ? body.error : 'Failed to load preview.');
+        return;
+      }
+
+      if (body && body.mode === 'screenshot' && body.imageUrl) {
+        showScreenshotPreview(body.imageUrl, body.url || url);
+      } else {
+        showIframePreview(body && body.url ? body.url : url);
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        return;
+      }
+
+      console.log(error);
+      showPreviewMessage('Failed to load preview.');
+    } finally {
+      if (requestId === previewRequestId) {
+        previewAbortController = null;
+      }
+    }
+  }
+
+  function showIframePreview(url) {
+    previewContainerEl.classList.remove('display-none');
+    productPreviewImageLinkEl.classList.add('display-none');
+    productPreviewImageEl.removeAttribute('src');
+    productIframeEl.classList.remove('display-none');
+    productIframeEl.src = url;
+    hidePreviewMessage();
+  }
+
+  function showScreenshotPreview(imageUrl, sourceUrl) {
+    previewContainerEl.classList.remove('display-none');
+    productIframeEl.classList.add('display-none');
+    productIframeEl.src = '';
+    productPreviewImageLinkEl.classList.remove('display-none');
+    productPreviewImageLinkEl.href = sourceUrl;
+    productPreviewImageEl.src = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    hidePreviewMessage();
+  }
+
+  function showPreviewMessage(message) {
+    previewContainerEl.classList.remove('display-none');
+    productIframeEl.classList.add('display-none');
+    productIframeEl.src = '';
+    productPreviewImageLinkEl.classList.add('display-none');
+    productPreviewImageEl.removeAttribute('src');
+    previewStatusEl.classList.remove('display-none');
+    previewStatusEl.textContent = message;
+  }
+
+  function clearPreview() {
+    previewContainerEl.classList.add('display-none');
+    productIframeEl.classList.add('display-none');
+    productIframeEl.src = '';
+    productPreviewImageLinkEl.classList.add('display-none');
+    productPreviewImageEl.removeAttribute('src');
+    previewStatusEl.classList.remove('display-none');
+    previewStatusEl.textContent = 'Enter a URL to load a preview.';
+  }
+
+  function hidePreviewMessage() {
+    previewStatusEl.textContent = '';
+    previewStatusEl.classList.add('display-none');
+  }
+
+  function isValidHttpUrl(value) {
+    try {
+      const parsedUrl = new URL(value);
+      return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+    } catch (error) {
+      return false;
+    }
   }
 </script>

@@ -34,8 +34,10 @@
           } else { 
             tracks.forEach(track => { 
         %>
-          <tr>
-            <td><a href="<%= track.price_url %>" target="_blank"><%= track.product_name %></a></td>
+          <tr class="track-summary-row" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
+            <td>
+              <div class="track-summary-title"><%= track.product_name %></div>
+            </td>
             <td><%= track.orig_price %></td>
             <td style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
               <%= track.curr_price %>
@@ -43,6 +45,17 @@
             <td><%= track.active ? 'Yes' : 'No' %></td>
             <td class="hide-on-mobile"><%= new Date(track.created_at).toLocaleDateString() %></td>
             <td class="hide-on-mobile"><%= new Date(track.last_modified_at).toLocaleDateString() %></td>
+          </tr>
+          <tr class="track-detail-row display-none" data-track-detail-row="<%= track.id %>">
+            <td colspan="6">
+              <div class="track-detail-card">
+                <p class="track-detail-link-row">
+                  <strong>Original link:</strong>
+                  <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
+                </p>
+                <%- include('partials/track-history-graph', { track }); %>
+              </div>
+            </td>
           </tr>
         <% 
             }); 
@@ -69,5 +82,34 @@
 
   function hideLoader() {
     loaderEl.classList.add('display-none');
+  }
+
+  document.querySelectorAll('[data-track-toggle]').forEach((row) => {
+    row.addEventListener('click', () => {
+      toggleTrackDetail(row.dataset.trackToggle);
+    });
+
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      event.preventDefault();
+      toggleTrackDetail(row.dataset.trackToggle);
+    });
+  });
+
+  function toggleTrackDetail(trackId) {
+    const summaryRow = document.querySelector(`[data-track-toggle="${trackId}"]`);
+    const detailRow = document.querySelector(`[data-track-detail-row="${trackId}"]`);
+
+    if (!summaryRow || !detailRow) {
+      return;
+    }
+
+    const willExpand = detailRow.classList.contains('display-none');
+    detailRow.classList.toggle('display-none', !willExpand);
+    summaryRow.classList.toggle('track-summary-row-expanded', willExpand);
+    summaryRow.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
   }
 </script>

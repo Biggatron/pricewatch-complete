@@ -26,8 +26,10 @@
     <% } else { %>
       <div class="admin-tabs" role="tablist" aria-label="Admin sections">
         <button class="admin-tab-button <%= activeTab === 'overview' ? 'is-active' : '' %>" type="button" data-tab-target="overview" role="tab" aria-selected="<%= activeTab === 'overview' ? 'true' : 'false' %>">Overview</button>
+        <button class="admin-tab-button <%= activeTab === 'jobs' ? 'is-active' : '' %>" type="button" data-tab-target="jobs" role="tab" aria-selected="<%= activeTab === 'jobs' ? 'true' : 'false' %>">Job Schedule</button>
         <button class="admin-tab-button <%= activeTab === 'tracks' ? 'is-active' : '' %>" type="button" data-tab-target="tracks" role="tab" aria-selected="<%= activeTab === 'tracks' ? 'true' : 'false' %>">Track Manager</button>
         <button class="admin-tab-button <%= activeTab === 'config' ? 'is-active' : '' %>" type="button" data-tab-target="config" role="tab" aria-selected="<%= activeTab === 'config' ? 'true' : 'false' %>">Config</button>
+        <button class="admin-tab-button <%= activeTab === 'cache' ? 'is-active' : '' %>" type="button" data-tab-target="cache" role="tab" aria-selected="<%= activeTab === 'cache' ? 'true' : 'false' %>">Cache</button>
         <button class="admin-tab-button <%= activeTab === 'service-logs' ? 'is-active' : '' %>" type="button" data-tab-target="service-logs" role="tab" aria-selected="<%= activeTab === 'service-logs' ? 'true' : 'false' %>">Service Logs</button>
         <button class="admin-tab-button <%= activeTab === 'failed-tracks' ? 'is-active' : '' %>" type="button" data-tab-target="failed-tracks" role="tab" aria-selected="<%= activeTab === 'failed-tracks' ? 'true' : 'false' %>">Failed Tracks</button>
         <button class="admin-tab-button <%= activeTab === 'emails' ? 'is-active' : '' %>" type="button" data-tab-target="emails" role="tab" aria-selected="<%= activeTab === 'emails' ? 'true' : 'false' %>">Emails</button>
@@ -35,12 +37,46 @@
 
       <section class="admin-tab-panel <%= activeTab === 'overview' ? 'is-active' : '' %>" data-tab-panel="overview">
         <div class="admin-panel">
-          <h2 class="admin-section-title">Actions</h2>
+          <h2 class="admin-section-title">Job actions</h2>
           <div class="admin-inline-actions">
-            <button class="btn" onclick="updateTracks()">Update tracks</button>
-            <button class="btn" onclick="sendPendingEmails()">Send pending emails</button>
+            <button class="btn" onclick="runAdminJob('crawler')">Update tracks</button>
+            <button class="btn" onclick="runAdminJob('email_delivery')">Send pending emails</button>
+            <button class="btn" onclick="runAdminJob('preview_cleanup')">Clean preview screenshots</button>
             <button class="btn admin-cancel-btn" onclick="clearRecentLogFile()">Clear recent log file</button>
           </div>
+        </div>
+
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Scheduled jobs</h2>
+          <p class="admin-subtitle">Cron expressions are edited in the Config tab. Linux cron should invoke the dispatcher every minute.</p>
+          <% if (!jobSettings || jobSettings.length === 0) { %>
+            <p>No job configuration found.</p>
+          <% } else { %>
+            <div class="admin-table-scroll">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>Job</th>
+                    <th>Enabled</th>
+                    <th>Cron</th>
+                    <th>Description</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% jobSettings.forEach((job) => { %>
+                    <tr>
+                      <td><%= job.displayName %></td>
+                      <td><%= job.enabled ? 'Yes' : 'No' %></td>
+                      <td><code><%= job.cronExpression %></code></td>
+                      <td><%= job.description %></td>
+                      <td><button class="btn btn-small" onclick="runAdminJob('<%= job.key %>')">Run now</button></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
         </div>
 
         <div class="admin-panel">
@@ -176,6 +212,55 @@
         </div>
       </section>
 
+      <section class="admin-tab-panel <%= activeTab === 'jobs' ? 'is-active' : '' %>" data-tab-panel="jobs">
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Job schedule</h2>
+          <p class="admin-subtitle">The scheduler keeps one pending row per enabled job and records the actual execution result after dispatch runs.</p>
+          <% if (!jobScheduleSummaries || jobScheduleSummaries.length === 0) { %>
+            <p>No scheduled job data found.</p>
+          <% } else { %>
+            <div class="admin-table-scroll">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>Job</th>
+                    <th>Enabled</th>
+                    <th>Cron</th>
+                    <th>Next execution</th>
+                    <th>Last run</th>
+                    <th>Last status</th>
+                    <th>Error reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% jobScheduleSummaries.forEach((job) => { %>
+                    <tr>
+                      <td><%= job.displayName %></td>
+                      <td><%= job.enabled ? 'Yes' : 'No' %></td>
+                      <td><code><%= job.cronExpression %></code></td>
+                      <td>
+                        <% if (!job.enabled) { %>
+                          Disabled
+                        <% } else if (!job.scheduleValid) { %>
+                          Invalid schedule
+                        <% } else if (job.nextRunAt) { %>
+                          <%= new Date(job.nextRunAt).toLocaleString() %>
+                        <% } else { %>
+                          -
+                        <% } %>
+                      </td>
+                      <td><%= job.lastRunAt ? new Date(job.lastRunAt).toLocaleString() : '-' %></td>
+                      <td><%= job.lastStatus || '-' %></td>
+                      <td><%= job.lastErrorReason || job.scheduleError || '-' %></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </section>
+
       <section class="admin-tab-panel <%= activeTab === 'tracks' ? 'is-active' : '' %>" data-tab-panel="tracks">
         <div class="admin-panel">
           <h2 class="admin-section-title">Track manager</h2>
@@ -233,10 +318,10 @@
                 </thead>
                 <tbody>
                   <% tracks.forEach((track) => { %>
-                    <tr data-track-row="<%= track.id %>">
+                    <tr class="admin-track-summary-row" data-track-row="<%= track.id %>" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
                       <td>
                         <div>
-                          <a href="<%= track.price_url %>" target="_blank"><%= track.product_name %></a>
+                          <span class="admin-track-name"><%= track.product_name %></span>
                           <span class="admin-track-inline-id">#<%= track.id %></span>
                         </div>
                       </td>
@@ -291,6 +376,17 @@
                         </div>
                       </td>
                     </tr>
+                    <tr class="admin-track-detail-row display-none" data-track-detail-row="<%= track.id %>">
+                      <td colspan="7">
+                        <div class="admin-track-detail-card">
+                          <p class="admin-track-detail-link-row">
+                            <strong>Original link:</strong>
+                            <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
+                          </p>
+                          <%- include('partials/track-history-graph', { track }); %>
+                        </div>
+                      </td>
+                    </tr>
                   <% }); %>
                 </tbody>
               </table>
@@ -311,7 +407,6 @@
                 <thead>
                   <tr>
                     <th>Key</th>
-                    <th>Category</th>
                     <th>Type</th>
                     <th>Description</th>
                     <th>Allowed values</th>
@@ -323,7 +418,6 @@
                   <% appConfigs.forEach((config) => { %>
                     <tr data-config-row="<%= config.config_key %>">
                       <td class="admin-config-key"><code><%= config.config_key %></code></td>
-                      <td><%= config.category || '-' %></td>
                       <td><%= config.data_type %></td>
                       <td><%= config.description || '-' %></td>
                       <td><%= config.value_help || '-' %></td>
@@ -353,6 +447,59 @@
                       <td>
                         <button class="btn btn-small" onclick="saveConfig('<%= config.config_key %>')">Save</button>
                       </td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </section>
+
+      <section class="admin-tab-panel <%= activeTab === 'cache' ? 'is-active' : '' %>" data-tab-panel="cache">
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Screenshot cache</h2>
+          <p class="admin-subtitle">Cache metadata is stored in the database. Screenshot files live in <code><%= previewCacheSummary.screenshotDirectory %></code>.</p>
+        </div>
+
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Cached screenshots</h2>
+          <% if (!previewCacheSummary.screenshotFiles || previewCacheSummary.screenshotFiles.length === 0) { %>
+            <p>No cached screenshots found.</p>
+          <% } else { %>
+            <div class="admin-table-scroll">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Source URL</th>
+                    <th>Created</th>
+                    <th>Last accessed</th>
+                    <th>Expires</th>
+                    <th>Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% previewCacheSummary.screenshotFiles.forEach((entry) => { %>
+                    <tr>
+                      <td>
+                        <% if (entry.fileExists) { %>
+                          <a href="<%= entry.publicPath %>" target="_blank"><%= entry.fileName %></a>
+                        <% } else { %>
+                          <%= entry.fileName %> (missing)
+                        <% } %>
+                      </td>
+                      <td class="admin-url-cell">
+                        <% if (entry.sourceUrl) { %>
+                          <a href="<%= entry.sourceUrl %>" target="_blank"><%= entry.sourceUrl %></a>
+                        <% } else { %>
+                          -
+                        <% } %>
+                      </td>
+                      <td><%= entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '-' %></td>
+                      <td><%= entry.lastAccessedAt ? new Date(entry.lastAccessedAt).toLocaleString() : '-' %></td>
+                      <td><%= entry.estimatedClearAt ? new Date(entry.estimatedClearAt).toLocaleString() : '-' %></td>
+                      <td><%= entry.sizeBytes == null ? '-' : Math.round((entry.sizeBytes || 0) / 1024) + ' KB' %></td>
                     </tr>
                   <% }); %>
                 </tbody>
@@ -517,6 +664,7 @@
                     <th>Current</th>
                     <th>Email</th>
                     <th>Attempts</th>
+                    <th>Next send</th>
                     <th>Delivered</th>
                     <th>Error</th>
                   </tr>
@@ -535,6 +683,7 @@
                       <td><%= logEntry.curr_price == null ? '-' : logEntry.curr_price %></td>
                       <td><%= logEntry.email || '-' %></td>
                       <td><%= logEntry.attempt_count == null ? 0 : logEntry.attempt_count %></td>
+                      <td><%= logEntry.next_send_at ? new Date(logEntry.next_send_at).toLocaleString() : '-' %></td>
                       <td><%= logEntry.delivered ? 'Yes' : 'No' %></td>
                       <td><%= logEntry.error_message || '-' %></td>
                     </tr>
@@ -577,23 +726,28 @@
     });
   });
 
-  async function updateTracks() {
+  async function runAdminJob(jobKey) {
     try {
-      const response = await fetch('/track/update-prices', {
+      const response = await fetch(`/admin/jobs/${jobKey}/run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json; charset=UTF-8'
         }
       });
 
-      if (response.status === 200) {
-        showToast('Track update job started');
+      const body = await response.json().catch(() => null);
+
+      if (response.status === 202) {
+        const message = body && body.message ? body.message : `${jobKey} job started`;
+        showToast(message);
       } else if (response.status === 401) {
         window.location.href = '/auth/login';
+      } else if (response.status === 409) {
+        showToast(body && body.error ? body.error : 'Job is already running');
       } else if (response.status === 403) {
         showToast('Admin access required');
       } else {
-        showToast('Something went wrong');
+        showToast(body && body.error ? body.error : 'Something went wrong');
       }
     } catch (error) {
       console.log(error);
@@ -633,32 +787,7 @@
   }
 
   async function sendPendingEmails() {
-    try {
-      const response = await fetch('/admin/emails/send-pending', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json; charset=UTF-8'
-        }
-      });
-
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        showToast(body && body.error ? body.error : 'Failed to send pending emails');
-        return;
-      }
-
-      const summary = body && body.summary ? body.summary : {};
-      showToast(
-        `Pending emails processed: ${summary.sentCount || 0} sent, ${summary.undeliverableCount || 0} undeliverable, ${summary.skippedCount || 0} skipped`
-      );
-
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'emails');
-      window.location.href = url.toString();
-    } catch (error) {
-      console.log(error);
-      showToast('Failed to send pending emails');
-    }
+    runAdminJob('email_delivery');
   }
 
   async function saveTrack(trackId) {
@@ -890,6 +1019,43 @@
       chip.classList.remove('tooltip-open');
     });
   });
+
+  document.querySelectorAll('[data-track-toggle]').forEach((row) => {
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('button, input, select, textarea, label, a, .admin-user-chip')) {
+        return;
+      }
+
+      toggleTrackDetail(row.dataset.trackToggle);
+    });
+
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      if (event.target.closest('button, input, select, textarea, label, a, .admin-user-chip')) {
+        return;
+      }
+
+      event.preventDefault();
+      toggleTrackDetail(row.dataset.trackToggle);
+    });
+  });
+
+  function toggleTrackDetail(trackId) {
+    const summaryRow = document.querySelector(`[data-track-toggle="${trackId}"]`);
+    const detailRow = document.querySelector(`[data-track-detail-row="${trackId}"]`);
+
+    if (!summaryRow || !detailRow) {
+      return;
+    }
+
+    const willExpand = detailRow.classList.contains('display-none');
+    detailRow.classList.toggle('display-none', !willExpand);
+    summaryRow.classList.toggle('admin-track-summary-row-expanded', willExpand);
+    summaryRow.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
+  }
 
   const serviceLogViewer = document.getElementById('service-log-viewer');
   if (serviceLogViewer) {

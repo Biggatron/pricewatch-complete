@@ -18,8 +18,26 @@ const {
   finalizeCrawlerRun,
   insertCrawlerRunItem
 } = require('./crawler-run-log');
+const { insertTrackHistoryEntry } = require('./track-history-log');
 const MAX_MATCH_PRICE = 1000000000;
 const MAX_EMAIL_DELIVERY_ATTEMPTS = 3;
+const PREVIEW_OUTPUT_DIR = path.join(__dirname, '..', 'public', 'generated-previews');
+const PREVIEW_IMAGE_EXTENSION = '.png';
+const PREVIEW_TIMEOUT_MS = 6000;
+const PREVIEW_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
+const PREVIEW_ORPHAN_GRACE_MS = 1000 * 60 * 5;
+const PREVIEW_CACHE_CONFIG_KEY = 'preview.screenshot_cache_duration_ms';
+const PREVIEW_POST_NAVIGATION_DELAY_CONFIG_KEY = 'preview.post_navigation_delay_ms';
+const PREVIEW_POST_BANNER_DELAY_CONFIG_KEY = 'preview.post_banner_delay_ms';
+const PREVIEW_VIEWPORT = {
+  width: 1280,
+  height: 1600
+};
+const previewScreenshotInflight = new Map();
+let previewBrowserPromise = null;
+let lastPreviewCleanupAt = 0;
+let previewCacheTableReadyPromise = null;
+let previewLegacyMigrationPromise = null;
 
 module.exports = {
   updatePrices,
@@ -27,8 +45,338 @@ module.exports = {
   findAndSavePrices,
   updateSingleTrack,
   getTrackHtmlPreview,
-  deliverPendingEmails
+  getUrlPreview,
+  deliverPendingEmails,
+  cleanupStoredPreviewFiles,
+  getPreviewCacheSummary
 };
+
+async function ensurePreviewCacheTable() {
+  if (!previewCacheTableReadyPromise) {
+    previewCacheTableReadyPromise = ensurePreviewCacheTableInternal().catch((error) => {
+      previewCacheTableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await previewCacheTableReadyPromise;
+  await ensureLegacyPreviewMetadataMigrated();
+}
+
+async function ensurePreviewCacheTableInternal() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS preview_screenshot_cache (
+      "id" serial PRIMARY KEY,
+      "url" varchar(2048) NOT NULL UNIQUE,
+      "file_name" varchar(255) NOT NULL UNIQUE,
+      "file_path" varchar(1024) NOT NULL,
+      "public_path" varchar(1024) NOT NULL,
+      "created_at" timestamp NOT NULL DEFAULT now(),
+      "last_accessed_at" timestamp NOT NULL DEFAULT now(),
+      "expires_at" timestamp NOT NULL
+    )
+  `);
+
+  await query(`
+    ALTER TABLE preview_screenshot_cache
+      ADD COLUMN IF NOT EXISTS url varchar(2048),
+      ADD COLUMN IF NOT EXISTS file_name varchar(255),
+      ADD COLUMN IF NOT EXISTS file_path varchar(1024),
+      ADD COLUMN IF NOT EXISTS public_path varchar(1024),
+      ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS last_accessed_at timestamp NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS expires_at timestamp
+  `);
+
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS preview_screenshot_cache_url_idx
+    ON preview_screenshot_cache (url)
+  `);
+
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS preview_screenshot_cache_file_name_idx
+    ON preview_screenshot_cache (file_name)
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS preview_screenshot_cache_expires_at_idx
+    ON preview_screenshot_cache (expires_at)
+  `);
+}
+
+async function getPreviewCacheDurationMs() {
+  const fallbackValue = constants.preview && constants.preview.screenshotCacheDurationMs
+    ? constants.preview.screenshotCacheDurationMs
+    : 1000 * 60 * 60 * 2;
+  const configuredValue = await getAppConfig(PREVIEW_CACHE_CONFIG_KEY, fallbackValue);
+  const parsedValue = Number(configuredValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return fallbackValue;
+  }
+
+  return Math.floor(parsedValue);
+}
+
+async function getPreviewPostNavigationDelayMs() {
+  const fallbackValue = constants.preview && Number.isFinite(constants.preview.postNavigationDelayMs)
+    ? constants.preview.postNavigationDelayMs
+    : 150;
+  const configuredValue = await getAppConfig(PREVIEW_POST_NAVIGATION_DELAY_CONFIG_KEY, fallbackValue);
+  const parsedValue = Number(configuredValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return fallbackValue;
+  }
+
+  return Math.floor(parsedValue);
+}
+
+async function getPreviewPostBannerDelayMs() {
+  const fallbackValue = constants.preview && Number.isFinite(constants.preview.postBannerDelayMs)
+    ? constants.preview.postBannerDelayMs
+    : 250;
+  const configuredValue = await getAppConfig(PREVIEW_POST_BANNER_DELAY_CONFIG_KEY, fallbackValue);
+  const parsedValue = Number(configuredValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return fallbackValue;
+  }
+
+  return Math.floor(parsedValue);
+}
+
+function getPreviewPublicPath(fileName) {
+  return `/generated-previews/${fileName}`;
+}
+
+function safelyRemovePreviewArtifacts(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    fs.rmSync(filePath, { force: true });
+  } catch (error) {
+    console.warn('[preview] Failed to remove preview screenshot file', {
+      filePath,
+      error
+    });
+  }
+
+  try {
+    fs.rmSync(`${filePath}.json`, { force: true });
+  } catch (error) {
+    console.warn('[preview] Failed to remove legacy preview metadata file', {
+      filePath,
+      error
+    });
+  }
+}
+
+function removeLegacyPreviewMetadataFile(metadataPath) {
+  try {
+    fs.rmSync(metadataPath, { force: true });
+  } catch (error) {
+    console.warn('[preview] Failed to remove legacy preview metadata file', {
+      metadataPath,
+      error
+    });
+  }
+}
+
+function normalizePreviewCacheRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  const fileName = row.file_name || (row.file_path ? path.basename(row.file_path) : null);
+  return {
+    ...row,
+    file_name: fileName,
+    public_path: row.public_path || (fileName ? getPreviewPublicPath(fileName) : null),
+    created_at: row.created_at ? new Date(row.created_at) : null,
+    last_accessed_at: row.last_accessed_at ? new Date(row.last_accessed_at) : null,
+    expires_at: row.expires_at ? new Date(row.expires_at) : null
+  };
+}
+
+function readLegacyPreviewMetadata(metadataPath) {
+  try {
+    const rawMetadata = fs.readFileSync(metadataPath, 'utf8');
+    const parsedMetadata = JSON.parse(rawMetadata);
+
+    return {
+      url: parsedMetadata.url || null,
+      imageUrl: parsedMetadata.imageUrl || null,
+      createdAt: parsedMetadata.createdAt ? new Date(parsedMetadata.createdAt) : null,
+      expiresAt: parsedMetadata.expiresAt ? new Date(parsedMetadata.expiresAt) : null
+    };
+  } catch (error) {
+    console.warn('[preview] Failed to read legacy preview metadata file', {
+      metadataPath,
+      error
+    });
+    return null;
+  }
+}
+
+async function ensureLegacyPreviewMetadataMigrated() {
+  if (!previewLegacyMigrationPromise) {
+    previewLegacyMigrationPromise = migrateLegacyPreviewMetadataFiles().catch((error) => {
+      previewLegacyMigrationPromise = null;
+      throw error;
+    });
+  }
+
+  await previewLegacyMigrationPromise;
+}
+
+async function migrateLegacyPreviewMetadataFiles() {
+  if (!fs.existsSync(PREVIEW_OUTPUT_DIR)) {
+    return;
+  }
+
+  const fileNames = fs.readdirSync(PREVIEW_OUTPUT_DIR)
+    .filter((fileName) => fileName.endsWith(`${PREVIEW_IMAGE_EXTENSION}.json`));
+
+  for (const fileName of fileNames) {
+    const metadataPath = path.join(PREVIEW_OUTPUT_DIR, fileName);
+    const filePath = metadataPath.slice(0, -'.json'.length);
+    const fileExists = fs.existsSync(filePath);
+    const metadata = readLegacyPreviewMetadata(metadataPath);
+
+    if (!fileExists || !metadata || !metadata.url) {
+      removeLegacyPreviewMetadataFile(metadataPath);
+      continue;
+    }
+
+    const createdAt = metadata.createdAt && Number.isFinite(metadata.createdAt.getTime())
+      ? metadata.createdAt
+      : new Date();
+    const expiresAt = metadata.expiresAt && Number.isFinite(metadata.expiresAt.getTime())
+      ? metadata.expiresAt
+      : new Date(createdAt.getTime() + await getPreviewCacheDurationMs());
+
+    await query(
+      `INSERT INTO preview_screenshot_cache (
+        url,
+        file_name,
+        file_path,
+        public_path,
+        created_at,
+        last_accessed_at,
+        expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (url) DO UPDATE SET
+        file_name = EXCLUDED.file_name,
+        file_path = EXCLUDED.file_path,
+        public_path = EXCLUDED.public_path,
+        created_at = EXCLUDED.created_at,
+        last_accessed_at = EXCLUDED.last_accessed_at,
+        expires_at = EXCLUDED.expires_at`,
+      [
+        metadata.url,
+        path.basename(filePath),
+        filePath,
+        metadata.imageUrl || getPreviewPublicPath(path.basename(filePath)),
+        createdAt,
+        createdAt,
+        expiresAt
+      ]
+    );
+
+    removeLegacyPreviewMetadataFile(metadataPath);
+  }
+}
+
+async function getPreviewCacheEntryByUrl(url) {
+  await ensurePreviewCacheTable();
+  const result = await query(
+    `SELECT *
+     FROM preview_screenshot_cache
+     WHERE url = $1
+     LIMIT 1`,
+    [url]
+  );
+
+  return normalizePreviewCacheRow(result.rows[0] || null);
+}
+
+async function deletePreviewCacheEntry(entry, options = {}) {
+  if (!entry || !entry.id) {
+    return;
+  }
+
+  await ensurePreviewCacheTable();
+
+  if (options.deleteFile !== false) {
+    safelyRemovePreviewArtifacts(entry.file_path);
+  }
+
+  await query(
+    `DELETE FROM preview_screenshot_cache
+     WHERE id = $1`,
+    [entry.id]
+  );
+}
+
+async function touchPreviewCacheEntry(entry) {
+  if (!entry || !entry.id) {
+    return null;
+  }
+
+  const expiresAt = new Date(Date.now() + await getPreviewCacheDurationMs());
+  const touchedAt = new Date();
+
+  const result = await query(
+    `UPDATE preview_screenshot_cache
+     SET last_accessed_at = $2,
+         expires_at = $3
+     WHERE id = $1
+     RETURNING *`,
+    [entry.id, touchedAt, expiresAt]
+  );
+
+  return normalizePreviewCacheRow(result.rows[0] || null);
+}
+
+async function upsertPreviewCacheEntry({ url, fileName, filePath, publicPath, createdAt }) {
+  await ensurePreviewCacheTable();
+
+  const existingEntry = await getPreviewCacheEntryByUrl(url);
+  const cacheDurationMs = await getPreviewCacheDurationMs();
+  const normalizedCreatedAt = createdAt || new Date();
+  const lastAccessedAt = normalizedCreatedAt;
+  const expiresAt = new Date(normalizedCreatedAt.getTime() + cacheDurationMs);
+
+  const result = await query(
+    `INSERT INTO preview_screenshot_cache (
+      url,
+      file_name,
+      file_path,
+      public_path,
+      created_at,
+      last_accessed_at,
+      expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (url) DO UPDATE SET
+      file_name = EXCLUDED.file_name,
+      file_path = EXCLUDED.file_path,
+      public_path = EXCLUDED.public_path,
+      created_at = EXCLUDED.created_at,
+      last_accessed_at = EXCLUDED.last_accessed_at,
+      expires_at = EXCLUDED.expires_at
+    RETURNING *`,
+    [url, fileName, filePath, publicPath, normalizedCreatedAt, lastAccessedAt, expiresAt]
+  );
+
+  if (existingEntry && existingEntry.file_path && existingEntry.file_path !== filePath) {
+    safelyRemovePreviewArtifacts(existingEntry.file_path);
+  }
+
+  return normalizePreviewCacheRow(result.rows[0] || null);
+}
 
 function updatePrices(options = {}) {
   const startedAt = Date.now();
@@ -38,6 +386,13 @@ function updatePrices(options = {}) {
       durationMs: Date.now() - startedAt,
       error
     });
+    return {
+      runId: null,
+      summary: {
+        status: 'failed',
+        errorMessage: error && error.message ? error.message : 'Crawler update failed'
+      }
+    };
   });
 }
 
@@ -119,17 +474,6 @@ async function getAndUpdatePrices(options = {}) {
       error
     });
   } finally {
-    if (processedTracks) {
-      try {
-        await deliverPendingEmails();
-      } catch (emailError) {
-        console.error('[crawler] Failed to process pending email queue after track update run', {
-          runId: run.id,
-          error: emailError
-        });
-      }
-    }
-
     summary.finished_at = new Date();
     summary.duration_ms = summary.finished_at.getTime() - summary.started_at.getTime();
     summary.track_count = summary.track_count || 0;
@@ -152,6 +496,11 @@ async function getAndUpdatePrices(options = {}) {
       });
     }
   }
+
+  return {
+    runId: run.id,
+    summary
+  };
 }
 
 async function updateSingleTrack(track, options = {}) {
@@ -208,18 +557,6 @@ async function updateSingleTrack(track, options = {}) {
     itemResult = await handleUnexpectedTrackError(track, run.id, error, itemResult);
     trackProcessed = true;
   } finally {
-    if (trackProcessed) {
-      try {
-        await deliverPendingEmails();
-      } catch (emailError) {
-        console.error('[crawler] Failed to process pending email queue after single-track update', {
-          runId: run.id,
-          trackId: track.id,
-          error: emailError
-        });
-      }
-    }
-
     applyRunItemToSummary(summary, itemResult || createRunItemResult(track));
     summary.status = summary.error_count > 0 ? 'partial' : 'success';
     summary.finished_at = new Date();
@@ -254,6 +591,26 @@ async function getTrackHtmlPreview(track) {
   return getHTML(trackContext);
 }
 
+async function getUrlPreview(inputUrl) {
+  const normalizedUrl = normalizePreviewUrl(inputUrl);
+  const iframeDecision = await inspectIframeSupport(normalizedUrl);
+
+  if (iframeDecision.mode === 'iframe') {
+    return {
+      mode: 'iframe',
+      url: iframeDecision.url
+    };
+  }
+
+  const imageUrl = await capturePreviewScreenshot(iframeDecision.url);
+  return {
+    mode: 'screenshot',
+    url: iframeDecision.url,
+    imageUrl,
+    reason: iframeDecision.reason
+  };
+}
+
 function getRandomUserAgent() {
   const userAgents = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
@@ -263,6 +620,583 @@ function getRandomUserAgent() {
     'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:45.0) Gecko/20100101 Firefox/45.0'
   ];
   return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+function normalizePreviewUrl(inputUrl) {
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(String(inputUrl || '').trim());
+  } catch (error) {
+    const invalidUrlError = new Error('Enter a valid http(s) URL');
+    invalidUrlError.code = 'INVALID_PREVIEW_URL';
+    throw invalidUrlError;
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    const invalidProtocolError = new Error('Preview URL must use http or https');
+    invalidProtocolError.code = 'INVALID_PREVIEW_URL';
+    throw invalidProtocolError;
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.local') || isPrivateHostname(hostname)) {
+    const blockedHostError = new Error('Preview URL host is not allowed');
+    blockedHostError.code = 'INVALID_PREVIEW_URL';
+    throw blockedHostError;
+  }
+
+  return parsedUrl.toString();
+}
+
+function isPrivateHostname(hostname) {
+  if (!hostname) {
+    return true;
+  }
+
+  if (hostname === '::1' || hostname === '[::1]') {
+    return true;
+  }
+
+  const normalizedHost = hostname.replace(/^\[|\]$/g, '');
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(normalizedHost)) {
+    const parts = normalizedHost.split('.').map((value) => Number.parseInt(value, 10));
+    if (parts.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+      return true;
+    }
+
+    return (
+      parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168)
+    );
+  }
+
+  return (
+    normalizedHost.startsWith('fc') ||
+    normalizedHost.startsWith('fd') ||
+    normalizedHost.startsWith('fe80:') ||
+    normalizedHost.startsWith('::ffff:127.')
+  );
+}
+
+async function inspectIframeSupport(url) {
+  let response = null;
+
+  try {
+    response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': getRandomUserAgent()
+      }
+    });
+
+    if (!response.ok || response.status === 405 || response.status === 501) {
+      if (response.body && typeof response.body.destroy === 'function') {
+        response.body.destroy();
+      }
+
+      response = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          'User-Agent': getRandomUserAgent()
+        }
+      });
+    }
+
+    const finalUrl = response.url || url;
+    const xFrameOptions = response.headers.get('x-frame-options');
+    const contentSecurityPolicy = response.headers.get('content-security-policy');
+
+    if (response.body && typeof response.body.destroy === 'function') {
+      response.body.destroy();
+    }
+
+    if (isIframeBlockedByHeaders(xFrameOptions, contentSecurityPolicy)) {
+      return {
+        mode: 'screenshot',
+        url: finalUrl,
+        reason: 'iframe_blocked'
+      };
+    }
+
+    return {
+      mode: 'iframe',
+      url: finalUrl,
+      reason: null
+    };
+  } catch (error) {
+    console.warn('[preview] Failed to inspect iframe support, defaulting to iframe preview', {
+      url,
+      error
+    });
+
+    if (response && response.body && typeof response.body.destroy === 'function') {
+      response.body.destroy();
+    }
+
+    return {
+      mode: 'iframe',
+      url,
+      reason: 'inspection_failed'
+    };
+  }
+}
+
+function isIframeBlockedByHeaders(xFrameOptions, contentSecurityPolicy) {
+  const normalizedXFrameOptions = String(xFrameOptions || '').trim().toLowerCase();
+  if (normalizedXFrameOptions.includes('deny') || normalizedXFrameOptions.includes('sameorigin')) {
+    return true;
+  }
+
+  const frameAncestorsValue = extractFrameAncestorsValue(contentSecurityPolicy);
+  if (!frameAncestorsValue) {
+    return false;
+  }
+
+  const normalizedFrameAncestors = frameAncestorsValue.toLowerCase();
+  if (normalizedFrameAncestors.includes("'none'") || normalizedFrameAncestors.includes("'self'")) {
+    return true;
+  }
+
+  return !normalizedFrameAncestors.includes('*');
+}
+
+function extractFrameAncestorsValue(contentSecurityPolicy) {
+  const policy = String(contentSecurityPolicy || '');
+  const match = policy.match(/frame-ancestors\s+([^;]+)/i);
+  return match ? match[1].trim() : '';
+}
+
+async function capturePreviewScreenshot(url) {
+  await maybeCleanupOldPreviewFiles();
+
+  const cachedPreview = await getCachedPreviewScreenshot(url);
+  if (cachedPreview) {
+    return cachedPreview;
+  }
+
+  const inflightCapture = previewScreenshotInflight.get(url);
+  if (inflightCapture) {
+    return inflightCapture;
+  }
+
+  const capturePromise = (async () => {
+    fs.mkdirSync(PREVIEW_OUTPUT_DIR, { recursive: true });
+
+    const fileName = `preview_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.png`;
+    const outputPath = path.join(PREVIEW_OUTPUT_DIR, fileName);
+    const browser = await getPreviewBrowser();
+    const page = await browser.newPage();
+
+    try {
+      await page.setViewport(PREVIEW_VIEWPORT);
+      await page.setUserAgent(getRandomUserAgent());
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: PREVIEW_TIMEOUT_MS
+      });
+
+      await delay(await getPreviewPostNavigationDelayMs());
+      await dismissCookieBanners(page);
+      await page.screenshot({
+        path: outputPath,
+        type: 'png',
+        fullPage: false
+      });
+
+      const createdAt = new Date();
+      const publicPath = getPreviewPublicPath(fileName);
+      await upsertPreviewCacheEntry({
+        url,
+        fileName,
+        filePath: outputPath,
+        publicPath,
+        createdAt
+      });
+
+      console.info('[preview] Screenshot captured', { url, fileName });
+      return publicPath;
+    } finally {
+      await page.close().catch(() => null);
+    }
+  })();
+
+  previewScreenshotInflight.set(url, capturePromise);
+
+  try {
+    return await capturePromise;
+  } finally {
+    previewScreenshotInflight.delete(url);
+  }
+}
+
+async function dismissCookieBanners(page) {
+  const frames = page.frames();
+  let clickedBanner = false;
+
+  for (const frame of frames) {
+    const clicked = await dismissCookieBannerInFrame(frame);
+    clickedBanner = clickedBanner || clicked;
+  }
+
+  if (clickedBanner) {
+    await delay(await getPreviewPostBannerDelayMs());
+  }
+
+  for (const frame of page.frames()) {
+    await hideCookieOverlayInFrame(frame);
+  }
+}
+
+async function dismissCookieBannerInFrame(frame) {
+  const selectorGroups = [
+    [
+      '#onetrust-reject-all-handler',
+      '#onetrust-pc-btn-handler',
+      '[data-testid*="reject"]',
+      '[id*="reject"]',
+      '[class*="reject"]'
+    ],
+    [
+      '[data-testid*="necessary"]',
+      '[id*="necessary"]',
+      '[class*="necessary"]',
+      '[aria-label*="necessary"]'
+    ],
+    [
+      '#onetrust-close-btn-container button',
+      '.onetrust-close-btn-handler',
+      '[aria-label="Close"]',
+      '[aria-label="Dismiss"]',
+      '[data-testid*="close"]'
+    ],
+    [
+      '#onetrust-accept-btn-handler',
+      '[data-testid*="accept"]',
+      '[id*="accept"]',
+      '[class*="accept"]'
+    ]
+  ];
+
+  for (const selectors of selectorGroups) {
+    for (const selector of selectors) {
+      try {
+        const handle = await frame.$(selector);
+        if (handle) {
+          await handle.click({ delay: 40 });
+          return true;
+        }
+      } catch (error) {
+        // Try the next selector.
+      }
+    }
+  }
+
+  try {
+    return await frame.evaluate((preferredTexts) => {
+      const normalize = (value) => String(value || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+
+      const clickables = Array.from(
+        document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')
+      );
+
+      for (const preferredText of preferredTexts) {
+        const match = clickables.find((element) => {
+          const label = normalize(
+            element.innerText ||
+            element.textContent ||
+            element.value ||
+            element.getAttribute('aria-label')
+          );
+
+          return label && (label === preferredText || label.includes(preferredText));
+        });
+
+        if (match) {
+          match.click();
+          return true;
+        }
+      }
+
+      return false;
+    }, [
+      'reject all',
+      'only necessary',
+      'necessary only',
+      'continue without accepting',
+      'reject',
+      'hafna',
+      'leyfa nauðsynlegar',
+      'bara nauðsynlegar',
+      'close',
+      'dismiss',
+      'loka',
+      'got it',
+      'accept',
+      'accept all',
+      'allow all',
+      'i agree',
+      'agree',
+      'samþykkja',
+      'leyfa allar'
+    ]);
+  } catch (error) {
+    return false;
+  }
+}
+
+async function hideCookieOverlayInFrame(frame) {
+  try {
+    await frame.evaluate((keywords) => {
+      const normalize = (value) => String(value || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+
+      const keywordList = keywords.map((keyword) => keyword.toLowerCase());
+      const elements = Array.from(document.querySelectorAll('body *'));
+
+      for (const element of elements) {
+        const descriptor = normalize([
+          element.id,
+          element.className,
+          element.getAttribute('aria-label'),
+          element.getAttribute('data-testid'),
+          element.getAttribute('role')
+        ].join(' '));
+
+        const style = window.getComputedStyle(element);
+        const isFixed = style.position === 'fixed' || style.position === 'sticky';
+        const coversLargeArea =
+          element.offsetWidth >= window.innerWidth * 0.6 &&
+          element.offsetHeight >= window.innerHeight * 0.15;
+        const keywordMatch = keywordList.some((keyword) => descriptor.includes(keyword));
+
+        if (keywordMatch && isFixed && coversLargeArea) {
+          element.style.setProperty('display', 'none', 'important');
+          element.style.setProperty('visibility', 'hidden', 'important');
+          element.style.setProperty('pointer-events', 'none', 'important');
+        }
+      }
+
+      document.documentElement.style.overflow = 'auto';
+      document.body.style.overflow = 'auto';
+    }, [
+      'cookie',
+      'consent',
+      'gdpr',
+      'privacy',
+      'onetrust',
+      'cookiebot',
+      'trustarc',
+      'quantcast',
+      'usercentrics',
+      'didomi'
+    ]);
+  } catch (error) {
+    // Ignore per-frame cleanup failures.
+  }
+}
+
+async function getCachedPreviewScreenshot(url) {
+  const cachedEntry = await getPreviewCacheEntryByUrl(url);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  const fileExists = cachedEntry.file_path && fs.existsSync(cachedEntry.file_path);
+  if (!fileExists) {
+    await deletePreviewCacheEntry(cachedEntry, {
+      deleteFile: false
+    });
+    return null;
+  }
+
+  if (!cachedEntry.expires_at || cachedEntry.expires_at.getTime() <= Date.now()) {
+    await deletePreviewCacheEntry(cachedEntry);
+    return null;
+  }
+
+  const refreshedEntry = await touchPreviewCacheEntry(cachedEntry);
+  return refreshedEntry ? refreshedEntry.public_path : cachedEntry.public_path;
+}
+
+async function maybeCleanupOldPreviewFiles() {
+  if (Date.now() - lastPreviewCleanupAt < PREVIEW_CLEANUP_INTERVAL_MS) {
+    return;
+  }
+
+  lastPreviewCleanupAt = Date.now();
+  await cleanupOldPreviewFiles();
+}
+
+async function cleanupOldPreviewFiles() {
+  await ensurePreviewCacheTable();
+
+  const summary = {
+    deletedCount: 0,
+    retainedCount: 0,
+    missingFileCount: 0,
+    orphanFileCount: 0,
+    legacyMetadataFilesRemoved: 0
+  };
+
+  const now = Date.now();
+  const result = await query(
+    `SELECT *
+     FROM preview_screenshot_cache
+     ORDER BY created_at ASC`
+  );
+  const cacheEntries = result.rows.map((row) => normalizePreviewCacheRow(row));
+  const referencedFiles = new Set();
+
+  for (const entry of cacheEntries) {
+    const fileExists = entry.file_path && fs.existsSync(entry.file_path);
+    const isExpired = !entry.expires_at || entry.expires_at.getTime() <= now;
+
+    if (!fileExists) {
+      await deletePreviewCacheEntry(entry, {
+        deleteFile: false
+      });
+      summary.missingFileCount += 1;
+      continue;
+    }
+
+    if (isExpired) {
+      await deletePreviewCacheEntry(entry);
+      summary.deletedCount += 1;
+      continue;
+    }
+
+    if (entry.file_path) {
+      referencedFiles.add(entry.file_path);
+    }
+    summary.retainedCount += 1;
+  }
+
+  if (!fs.existsSync(PREVIEW_OUTPUT_DIR)) {
+    return summary;
+  }
+
+  const fileNames = fs.readdirSync(PREVIEW_OUTPUT_DIR);
+  for (const fileName of fileNames) {
+    const absolutePath = path.join(PREVIEW_OUTPUT_DIR, fileName);
+
+    if (fileName.endsWith(`${PREVIEW_IMAGE_EXTENSION}.json`)) {
+      removeLegacyPreviewMetadataFile(absolutePath);
+      summary.legacyMetadataFilesRemoved += 1;
+      continue;
+    }
+
+    if (!fileName.endsWith(PREVIEW_IMAGE_EXTENSION)) {
+      continue;
+    }
+
+    if (referencedFiles.has(absolutePath)) {
+      continue;
+    }
+
+    try {
+      const stats = fs.statSync(absolutePath);
+      if (now - stats.mtimeMs < PREVIEW_ORPHAN_GRACE_MS) {
+        continue;
+      }
+
+      safelyRemovePreviewArtifacts(absolutePath);
+      summary.orphanFileCount += 1;
+    } catch (error) {
+      console.warn('[preview] Failed to inspect orphan preview file', {
+        fileName,
+        error
+      });
+    }
+  }
+
+  return summary;
+}
+
+function delay(durationMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+}
+
+async function getPreviewBrowser() {
+  if (!previewBrowserPromise) {
+    previewBrowserPromise = puppeteer.launch().then((browser) => {
+      browser.on('disconnected', () => {
+        previewBrowserPromise = null;
+      });
+      return browser;
+    }).catch((error) => {
+      previewBrowserPromise = null;
+      throw error;
+    });
+  }
+
+  return previewBrowserPromise;
+}
+
+async function cleanupStoredPreviewFiles() {
+  lastPreviewCleanupAt = Date.now();
+  const summary = await cleanupOldPreviewFiles();
+  console.info('[preview] Stored preview cleanup completed', summary);
+  return summary;
+}
+
+async function getPreviewCacheSummary() {
+  await maybeCleanupOldPreviewFiles();
+  await ensurePreviewCacheTable();
+
+  const result = await query(
+    `SELECT *
+     FROM preview_screenshot_cache
+     ORDER BY created_at DESC`
+  );
+
+  const screenshotFiles = result.rows
+    .map((row) => normalizePreviewCacheRow(row))
+    .map((entry) => {
+      const fileExists = entry.file_path && fs.existsSync(entry.file_path);
+      let sizeBytes = null;
+
+      if (fileExists) {
+        try {
+          sizeBytes = fs.statSync(entry.file_path).size;
+        } catch (error) {
+          console.warn('[preview] Failed to inspect cached screenshot file', {
+            filePath: entry.file_path,
+            error
+          });
+        }
+      }
+
+      return {
+        id: entry.id,
+        fileName: entry.file_name,
+        publicPath: entry.public_path,
+        absolutePath: entry.file_path,
+        sourceUrl: entry.url,
+        createdAt: entry.created_at,
+        lastAccessedAt: entry.last_accessed_at,
+        estimatedClearAt: entry.expires_at,
+        sizeBytes,
+        fileExists
+      };
+    });
+
+  return {
+    screenshotDirectory: PREVIEW_OUTPUT_DIR,
+    screenshotFiles
+  };
 }
 
 async function getHTML(url) {
@@ -442,16 +1376,29 @@ async function findPriceFromDiv(html, track) {
     return handleMatchedPrice(jsonLdPrice, track);
   }
 
+  if (trackUsesNextDataPriceDiv(track)) {
+    const nextDataPrice = extractPriceFromNextData(html);
+    if (isValidMatchedPrice(nextDataPrice)) {
+      console.info('[crawler] Found price in Next.js __NEXT_DATA__ payload', {
+        id: track.id,
+        productName: track.product_name,
+        price: nextDataPrice
+      });
+      return handleMatchedPrice(nextDataPrice, track);
+    }
+  }
+
   let priceDivBeforeAfter = [];
   const htmlMinMatchSize = await getAppConfig('crawler.html_min_match_size', constants.crawler.htmlMinMatchSize);
+  const trackPriceDiv = stripPriceDivSourcePrefix(track.price_div);
 
   // Try to find exact match
-  let matches = html.match(track.price_div);
+  let matches = html.match(trackPriceDiv);
 
   // If exact match failes then try matching html before price, then after price
   // This can happen when price is discounted and a before price or a discount percentage div is added
   if (!matches || !matches[1]) {
-    priceDivBeforeAfter = track.price_div.split("(.*?)");
+    priceDivBeforeAfter = trackPriceDiv.split("(.*?)");
     let searchString = `${priceDivBeforeAfter[0]}(.*?)<`;
     matches = html.match(searchString);
   }
@@ -621,6 +1568,31 @@ function extractPriceFromJsonLd(html) {
   return productData ? productData.price : null;
 }
 
+const NEXT_DATA_PRICE_DIV_PREFIX = '__NEXT_DATA__::';
+
+function extractPriceFromNextData(html) {
+  const productData = extractProductDataFromNextData(html);
+  return productData ? productData.price : null;
+}
+
+function trackUsesNextDataPriceDiv(track) {
+  return track != null
+    && typeof track.price_div === 'string'
+    && track.price_div.startsWith(NEXT_DATA_PRICE_DIV_PREFIX);
+}
+
+function stripPriceDivSourcePrefix(priceDiv) {
+  if (typeof priceDiv !== 'string') {
+    return priceDiv;
+  }
+
+  if (priceDiv.startsWith(NEXT_DATA_PRICE_DIV_PREFIX)) {
+    return priceDiv.slice(NEXT_DATA_PRICE_DIV_PREFIX.length);
+  }
+
+  return priceDiv;
+}
+
 function safeParseJson(value) {
   try {
     return JSON.parse(value);
@@ -654,6 +1626,29 @@ function extractProductDataFromJsonLd(html) {
   }
 
   return null;
+}
+
+function extractProductDataFromNextData(html) {
+  const scriptMatch = html.match(/<script(?=[^>]*id=["']__NEXT_DATA__["'])(?=[^>]*type=["']application\/json["'])[^>]*>([\s\S]*?)<\/script>/i);
+  if (!scriptMatch || !scriptMatch[1]) {
+    return null;
+  }
+
+  const scriptContent = scriptMatch[1].trim();
+  const parsedJson = safeParseJson(scriptContent);
+  if (parsedJson == null) {
+    return null;
+  }
+
+  const productData = findProductDataInNextData(parsedJson);
+  if (!productData || !isNumeric(productData.price)) {
+    return null;
+  }
+
+  return {
+    ...productData,
+    priceDiv: buildNextDataPriceDiv(scriptContent, productData.price)
+  };
 }
 
 function findProductDataInJsonLd(node) {
@@ -697,6 +1692,61 @@ function findProductDataInJsonLd(node) {
 
   for (const value of Object.values(node)) {
     const nestedProductData = findProductDataInJsonLd(value);
+    if (nestedProductData) {
+      return nestedProductData;
+    }
+  }
+
+  return null;
+}
+
+function extractPriceFromNextDataNode(node) {
+  const candidateFields = [node.regularPrice, node.price, node.priceMin, node.priceMax];
+
+  for (const candidate of candidateFields) {
+    const price = extractNumber(String(candidate ?? ''));
+    if (isNumeric(price)) {
+      return price;
+    }
+  }
+
+  return null;
+}
+
+function findProductDataInNextData(node) {
+  if (!node) {
+    return null;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const productData = findProductDataInNextData(item);
+      if (productData) {
+        return productData;
+      }
+    }
+    return null;
+  }
+
+  if (typeof node !== 'object') {
+    return null;
+  }
+
+  const candidatePrice = extractPriceFromNextDataNode(node);
+  const hasProductIdentity = [node.name, node.title, node.slug, node.sku, node.brand]
+    .some((value) => typeof value === 'string' && value.trim() !== '');
+
+  if (hasProductIdentity && candidatePrice) {
+    return {
+      price: candidatePrice,
+      name: typeof node.name === 'string' && node.name.trim() !== ''
+        ? node.name
+        : (typeof node.title === 'string' ? node.title : null)
+    };
+  }
+
+  for (const value of Object.values(node)) {
+    const nestedProductData = findProductDataInNextData(value);
     if (nestedProductData) {
       return nestedProductData;
     }
@@ -751,6 +1801,25 @@ function buildJsonLdPriceDiv(scriptContent, price) {
   return escapedSnippet.trim();
 }
 
+function buildNextDataPriceDiv(scriptContent, price) {
+  const pricePattern = new RegExp(`(["'](?:regularPrice|price|priceMin|priceMax)["']\\s*:\\s*["']?)${escapeRegex(price)}(["']?)`, 'i');
+  const match = scriptContent.match(pricePattern);
+
+  if (!match || typeof match.index !== 'number') {
+    return escapeRegex(`"regularPrice":${price}`).replace(escapeRegex(price), '(.*?)');
+  }
+
+  const matchedText = match[0];
+  const startPos = Math.max(0, match.index - 500);
+  const endPos = Math.min(scriptContent.length, match.index + matchedText.length + 500);
+  const snippet = scriptContent.substring(startPos, endPos);
+  const matchPlaceholder = `__PRICE_MATCH_${Date.now()}__`;
+  let escapedSnippet = escapeRegex(snippet.replace(matchedText, matchPlaceholder));
+  const escapedMatchedText = escapeRegex(matchedText).replace(escapeRegex(price), '(.*?)');
+  escapedSnippet = escapedSnippet.replace(matchPlaceholder, escapedMatchedText);
+  return escapedSnippet.trim();
+}
+
 function createTrackFromMatch({ trackRequest, fullyRenderHTML, matchedPrice, priceDiv, title }) {
   return {
     orig_price: matchedPrice,
@@ -789,10 +1858,19 @@ function createTrackFromMatch({ trackRequest, fullyRenderHTML, matchedPrice, pri
 } 
 
 async function setTrackAsInactive(track) {
+  const previousActive = Boolean(track.active);
   const compResult = await query(
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [false, new Date(), track.id]
   );
+  if (previousActive) {
+    await insertTrackHistoryEntry({
+      trackId: track.id,
+      priceBefore: track.curr_price,
+      priceAfter: track.curr_price,
+      active: false
+    });
+  }
   console.warn('[crawler] Track marked inactive', {
     id: track.id,
     productName: track.product_name
@@ -801,13 +1879,27 @@ async function setTrackAsInactive(track) {
 }
 
 async function setTrackAsActive(track) {
+  const previousActive = Boolean(track.active);
   const compResult = await query(
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [true, new Date(), track.id]
   );
+  if (!previousActive) {
+    await insertTrackHistoryEntry({
+      trackId: track.id,
+      priceBefore: track.curr_price,
+      priceAfter: track.curr_price,
+      active: true
+    });
+  }
 }
 
 async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
+  if (!isValidMatchedPrice(trackRequest.orig_price)) {
+    res.status(400).json({ error: 'Price is required and must be a valid numeric value' });
+    return;
+  }
+
   let html = '';
   if (fullyRenderHTML) {
     html = await getRenderedHTML({
@@ -859,6 +1951,23 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
       priceDiv: jsonLdProduct.priceDiv,
       title: jsonLdProduct.name || title
     }));
+  }
+
+  if (tracks.length === 0) {
+    const nextDataProduct = extractProductDataFromNextData(html);
+    if (nextDataProduct && isValidMatchedPrice(nextDataProduct.price) && nextDataProduct.price === trackRequest.orig_price) {
+      console.info('[crawler] Found original price in Next.js __NEXT_DATA__ payload', {
+        url: trackRequest.price_url,
+        price: nextDataProduct.price
+      });
+      tracks.push(createTrackFromMatch({
+        trackRequest,
+        fullyRenderHTML,
+        matchedPrice: nextDataProduct.price,
+        priceDiv: `${NEXT_DATA_PRICE_DIV_PREFIX}${nextDataProduct.priceDiv}`,
+        title: nextDataProduct.name || title
+      }));
+    }
   }
 
   // Use the DOM API to extract values from elements
@@ -992,6 +2101,16 @@ async function addTracksToDatabase(tracks, res) {
   // Loop through tracks and add/update database
   for (let i = 0; i < tracks.length; i++) {
     let track = tracks[i];
+    if (!isValidMatchedPrice(track.orig_price) || !isValidMatchedPrice(track.curr_price)) {
+      console.warn('[crawler] Skipping invalid track price payload', {
+        productName: track.product_name,
+        priceUrl: track.price_url,
+        origPrice: track.orig_price,
+        currPrice: track.curr_price
+      });
+      continue;
+    }
+
     // Product name can at most be 64 char
     track.product_name = track.product_name.substring(0, 63);
     
@@ -1003,6 +2122,17 @@ async function addTracksToDatabase(tracks, res) {
         [track.curr_price, new Date(), track.price_div, track.product_name, track.active, track.requires_javascript, existingTrack.id]
       );
       if (updateResult.rows[0] && updateResult.rows[0].id) {
+        if (
+          Number(existingTrack.curr_price) !== Number(track.curr_price) ||
+          Boolean(existingTrack.active) !== Boolean(track.active)
+        ) {
+          await insertTrackHistoryEntry({
+            trackId: existingTrack.id,
+            priceBefore: existingTrack.curr_price,
+            priceAfter: track.curr_price,
+            active: Boolean(track.active)
+          });
+        }
         ++trackInsertCount;
       }
     } else {
@@ -1011,6 +2141,12 @@ async function addTracksToDatabase(tracks, res) {
         [ track.orig_price, track.curr_price, track.requires_javascript, track.price_url, track.price_div, track.product_name, track.user_id, track.email, track.active, track.created_at, track.last_modified_at ]
       );
       if (insertResult.rows[0].id) {
+        await insertTrackHistoryEntry({
+          trackId: insertResult.rows[0].id,
+          priceBefore: null,
+          priceAfter: track.curr_price,
+          active: Boolean(track.active)
+        });
         ++trackInsertCount;
       }
     }
@@ -1037,25 +2173,39 @@ async function updatePrice(newPrice, track) {
     'UPDATE track SET "curr_price" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [newPrice, new Date(), track.id]
   );
+  await insertTrackHistoryEntry({
+    trackId: track.id,
+    priceBefore: track.curr_price,
+    priceAfter: newPrice,
+    active: Boolean(track.active)
+  });
 }
 
 async function queueEmail(email) {
   const startedAt = Date.now();
+  const queuedAt = email.created_at || new Date();
+  email.created_at = queuedAt;
   email.delivered = false;
   email.status = 'pending';
   email.error_message = null;
   email.sent_at = null;
   email.attempt_count = 0;
   email.last_attempt_at = null;
+  email.next_send_at = queuedAt;
   await insertEmail(email);
   return Date.now() - startedAt;
 }
 
-async function deliverPendingEmails() {
-  const pendingEmails = await getPendingEmailLogs();
+async function deliverPendingEmails(options = {}) {
+  const allPendingCount = await getPendingEmailCount();
+  const pendingEmails = await getPendingEmailLogs(options);
+  const deferredCount = Math.max(0, allPendingCount - pendingEmails.length);
+
   if (pendingEmails.length === 0) {
     return {
-      pendingCount: 0,
+      pendingCount: allPendingCount,
+      dueCount: 0,
+      deferredCount,
       sentCount: 0,
       undeliverableCount: 0,
       skippedCount: 0
@@ -1064,18 +2214,14 @@ async function deliverPendingEmails() {
 
   const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
   if (!sendEmailsEnabled) {
-    await batchUpdateEmailLogs(pendingEmails.map((email) => email.id), {
-      status: 'skipped_disabled',
-      errorMessage: 'Email sending is disabled.',
-      delivered: false,
-      sentAt: null,
-      lastAttemptAt: null
-    });
     console.info('[crawler] Pending email delivery skipped because email sending is disabled', {
-      pendingCount: pendingEmails.length
+      pendingCount: allPendingCount,
+      dueCount: pendingEmails.length
     });
     return {
-      pendingCount: pendingEmails.length,
+      pendingCount: allPendingCount,
+      dueCount: pendingEmails.length,
+      deferredCount,
       sentCount: 0,
       undeliverableCount: 0,
       skippedCount: pendingEmails.length
@@ -1089,20 +2235,16 @@ async function deliverPendingEmails() {
     deliveryContext = await createEmailTransport({ transportMode: configuredTransportMode });
   } catch (error) {
     if (error && error.code === 'EMAIL_CONFIG_MISSING') {
-      await batchUpdateEmailLogs(pendingEmails.map((email) => email.id), {
-        status: 'skipped_missing_config',
-        errorMessage: error.message,
-        delivered: false,
-        sentAt: null,
-        lastAttemptAt: null
-      });
       console.error('[crawler] Pending email delivery skipped because configuration is incomplete', {
-        pendingCount: pendingEmails.length,
+        pendingCount: allPendingCount,
+        dueCount: pendingEmails.length,
         transportMode: configuredTransportMode,
         ...(error.details || {})
       });
       return {
-        pendingCount: pendingEmails.length,
+        pendingCount: allPendingCount,
+        dueCount: pendingEmails.length,
+        deferredCount,
         sentCount: 0,
         undeliverableCount: 0,
         skippedCount: pendingEmails.length
@@ -1113,7 +2255,9 @@ async function deliverPendingEmails() {
   }
 
   const summary = {
-    pendingCount: pendingEmails.length,
+    pendingCount: allPendingCount,
+    dueCount: pendingEmails.length,
+    deferredCount,
     sentCount: 0,
     undeliverableCount: 0,
     skippedCount: 0
@@ -1137,6 +2281,7 @@ async function deliverPendingEmails() {
 
 async function deliverPendingEmail(emailLog, deliveryContext) {
   let attemptCount = Number(emailLog.attempt_count) || 0;
+  const retryDelayMs = await getEmailRetryDelayMs();
 
   if (attemptCount >= MAX_EMAIL_DELIVERY_ATTEMPTS) {
     await updateEmailLog(emailLog.id, {
@@ -1145,7 +2290,8 @@ async function deliverPendingEmail(emailLog, deliveryContext) {
       delivered: false,
       sentAt: null,
       attemptCount,
-      lastAttemptAt: emailLog.last_attempt_at || new Date()
+      lastAttemptAt: emailLog.last_attempt_at || new Date(),
+      nextSendAt: null
     });
     return { status: 'undeliverable' };
   }
@@ -1163,7 +2309,8 @@ async function deliverPendingEmail(emailLog, deliveryContext) {
         delivered: true,
         sentAt: new Date(),
         attemptCount,
-        lastAttemptAt: attemptedAt
+        lastAttemptAt: attemptedAt,
+        nextSendAt: null
       });
 
       console.info('[crawler] Email sent', {
@@ -1179,6 +2326,9 @@ async function deliverPendingEmail(emailLog, deliveryContext) {
     } catch (error) {
       const hasAttemptsRemaining = attemptCount < MAX_EMAIL_DELIVERY_ATTEMPTS;
       const status = hasAttemptsRemaining ? 'pending' : 'undeliverable';
+      const nextSendAt = hasAttemptsRemaining
+        ? new Date(attemptedAt.getTime() + retryDelayMs)
+        : null;
 
       await updateEmailLog(emailLog.id, {
         status,
@@ -1186,7 +2336,8 @@ async function deliverPendingEmail(emailLog, deliveryContext) {
         delivered: false,
         sentAt: null,
         attemptCount,
-        lastAttemptAt: attemptedAt
+        lastAttemptAt: attemptedAt,
+        nextSendAt
       });
 
       console.error('[crawler] Failed to deliver queued email', {
@@ -1421,6 +2572,7 @@ async function ensureEmailLogTableColumns() {
       "sent_at" timestamp,
       "attempt_count" integer NOT NULL DEFAULT 0,
       "last_attempt_at" timestamp,
+      "next_send_at" timestamp,
       "created_at" timestamp
     )
   `);
@@ -1441,6 +2593,7 @@ async function ensureEmailLogTableColumns() {
       ADD COLUMN IF NOT EXISTS sent_at timestamp,
       ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS last_attempt_at timestamp,
+      ADD COLUMN IF NOT EXISTS next_send_at timestamp,
       ADD COLUMN IF NOT EXISTS created_at timestamp
   `);
 }
@@ -1465,9 +2618,10 @@ async function insertEmail(email) {
         sent_at,
         attempt_count,
         last_attempt_at,
+        next_send_at,
         created_at
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         email.track_id,
@@ -1484,6 +2638,7 @@ async function insertEmail(email) {
         email.sent_at || null,
         Number.isFinite(email.attempt_count) ? email.attempt_count : 0,
         email.last_attempt_at || null,
+        email.next_send_at || email.created_at || new Date(),
         email.created_at,
       ]
     );
@@ -1504,16 +2659,31 @@ async function insertEmail(email) {
   }
 }
 
-async function getPendingEmailLogs() {
+async function getPendingEmailLogs(options = {}) {
   await ensureEmailLogTable();
+  const whereClause = options.ignoreSchedule
+    ? `status IN ('pending', 'skipped_disabled', 'skipped_missing_config')`
+    : `status IN ('pending', 'skipped_disabled', 'skipped_missing_config')
+       AND (next_send_at IS NULL OR next_send_at <= NOW())`;
   const result = await query(
     `SELECT *
      FROM email_logs
-     WHERE status = 'pending'
+     WHERE ${whereClause}
      ORDER BY created_at ASC NULLS LAST, id ASC`
   );
 
   return result.rows;
+}
+
+async function getPendingEmailCount() {
+  await ensureEmailLogTable();
+  const result = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM email_logs
+     WHERE status IN ('pending', 'skipped_disabled', 'skipped_missing_config')`
+  );
+
+  return result.rows[0] ? result.rows[0].total : 0;
 }
 
 async function updateEmailLog(emailLogId, {
@@ -1522,7 +2692,8 @@ async function updateEmailLog(emailLogId, {
   delivered = false,
   sentAt = null,
   attemptCount = 0,
-  lastAttemptAt = null
+  lastAttemptAt = null,
+  nextSendAt = null
 }) {
   await ensureEmailLogTable();
   await query(
@@ -1532,7 +2703,8 @@ async function updateEmailLog(emailLogId, {
          delivered = $4,
          sent_at = $5,
          attempt_count = $6,
-         last_attempt_at = $7
+         last_attempt_at = $7,
+         next_send_at = $8
      WHERE id = $1`,
     [
       emailLogId,
@@ -1541,7 +2713,8 @@ async function updateEmailLog(emailLogId, {
       delivered,
       sentAt,
       attemptCount,
-      lastAttemptAt
+      lastAttemptAt,
+      nextSendAt
     ]
   );
 }
@@ -1551,7 +2724,8 @@ async function batchUpdateEmailLogs(emailLogIds, {
   errorMessage = null,
   delivered = false,
   sentAt = null,
-  lastAttemptAt = null
+  lastAttemptAt = null,
+  nextSendAt = null
 }) {
   if (!emailLogIds || emailLogIds.length === 0) {
     return;
@@ -1564,7 +2738,8 @@ async function batchUpdateEmailLogs(emailLogIds, {
          error_message = $3,
          delivered = $4,
          sent_at = $5,
-         last_attempt_at = $6
+         last_attempt_at = $6,
+         next_send_at = $7
      WHERE id = ANY($1::int[])`,
     [
       emailLogIds,
@@ -1572,9 +2747,17 @@ async function batchUpdateEmailLogs(emailLogIds, {
       errorMessage,
       delivered,
       sentAt,
-      lastAttemptAt
+      lastAttemptAt,
+      nextSendAt
     ]
   );
+}
+
+async function getEmailRetryDelayMs() {
+  const retryDelayMs = await getAppConfig('email.retry_delay_ms', constants.email.retryDelayMs);
+  return Number.isFinite(retryDelayMs) && retryDelayMs >= 0
+    ? retryDelayMs
+    : constants.email.retryDelayMs;
 }
 
 function extractNumber(price) {

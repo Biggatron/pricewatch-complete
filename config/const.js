@@ -5,10 +5,16 @@ module.exports = {
     intervalTime: 1000 * 3600 * 24, // milliseconds // Every 24 hours
     htmlMinMatchSize: 50
   },
+  preview: {
+    screenshotCacheDurationMs: 1000 * 60 * 60 * 2,
+    postNavigationDelayMs: 150,
+    postBannerDelayMs: 250
+  },
   email: {
     sendEmail: true,
     transportMode: defaultEmailTransportMode,
-    sesAddress: 'pricewatcher@birgirs.com'
+    sesAddress: 'pricewatcher@birgirs.com',
+    retryDelayMs: 1000 * 60 * 15
   },
   html: {
     saveNewTrackHTML: true,

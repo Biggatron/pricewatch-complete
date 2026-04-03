@@ -9,9 +9,7 @@ const trackRoutes = require('./routes/track-routes');
 const passportSetup = require('./config/passport')
 const keys = require('./config/keys');
 const errorHandler = require('./utilities/errorHandler');
-const crawler = require('./utilities/crawler');
-const constants = require('./config/const');
-const { ensureAppConfigTable, getAppConfig } = require('./utilities/app-config');
+const { ensureAppConfigTable } = require('./utilities/app-config');
 const { initializeLogger } = require('./utilities/logger');
 
 initializeLogger();
@@ -83,51 +81,12 @@ server.listen(port, () => {
   console.log(`Price watch listening on port ${port}`)
 })
 
-startCrawlerScheduler();
+initializeAppConfig();
 
-async function startCrawlerScheduler() {
+async function initializeAppConfig() {
   try {
     await ensureAppConfigTable();
   } catch (error) {
-    console.error('[scheduler] Failed to initialize app_config table', error);
+    console.error('[startup] Failed to initialize app_config table', error);
   }
-
-  scheduleNextCrawlerRun();
-}
-
-async function scheduleNextCrawlerRun() {
-  const intervalMs = await getCrawlerScheduleInterval();
-
-  console.info('[scheduler] Next crawler run scheduled', {
-    intervalMs
-  });
-
-  setTimeout(async () => {
-    try {
-      const schedulerEnabled = await getAppConfig('crawler.schedule.enabled', true);
-
-      if (schedulerEnabled) {
-        await crawler.updatePrices({ triggerType: 'scheduled' });
-      } else {
-        console.info('[scheduler] Scheduled crawler run skipped because scheduler is disabled');
-      }
-    } catch (error) {
-      console.error('[scheduler] Scheduled crawler run failed', error);
-    } finally {
-      scheduleNextCrawlerRun();
-    }
-  }, intervalMs);
-}
-
-async function getCrawlerScheduleInterval() {
-  const intervalMs = await getAppConfig(
-    'crawler.schedule.interval_ms',
-    constants.crawler.intervalTime
-  );
-
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    return constants.crawler.intervalTime;
-  }
-
-  return intervalMs;
 }

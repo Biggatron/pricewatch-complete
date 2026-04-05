@@ -31,75 +31,95 @@ iframe {
 /****************************/
 /*      Track table         */
 /****************************/
-/* Style for table */
 .table-wrapper {
-  display: flex;
-  flex: auto;
-  flex-direction: column;
+  overflow-x: auto;
   width: 100%;
-  overflow-x: scroll;
 }
 
-table {
-  margin-top: 1rem;
-  border-collapse: collapse;
-  width: 80%;
-  border: 3px solid;
-  border-color: #333;
-  align-self: center;
+.my-tracks-main {
+  background:
+    radial-gradient(circle at top right, rgba(255, 183, 88, 0.38), transparent 26rem),
+    linear-gradient(180deg, #f8f2eb 0%, #f2eeee 48%, #ebe7e4 100%);
+  padding: 2rem 1rem 3rem;
 }
-table a {
-  color: rgb(100, 100, 255);
+
+.my-tracks-shell {
+  margin: 0 auto;
+  max-width: 1180px;
+  width: 100%;
+}
+
+.my-tracks-window {
+  margin: 0 auto;
+  width: min(100%, 1040px);
+}
+
+.my-tracks-table a {
+  color: #356fd0;
   text-decoration: none;
 }
-table a:visited {
-  color: rgb(100, 100, 255);
-}
 
-thead {
-  border-color: #333;
-}
-
-/* Style for table headers */
-th {
-  background-color: #333; /* Darker header background color */
-  color: white;
-  text-align: left;
-  padding: 8px;
-  border: 2px solid #333;
-}
-
-/* Style for table cells */
-td {
-  padding: 8px;
-  border: 1px solid;
+.my-tracks-table a:visited {
+  color: #356fd0;
 }
 
 .track-summary-row {
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: transform 0.15s ease, background-color 0.15s ease;
 }
 
-.track-summary-row:hover {
-  background-color: #ececec;
+.track-summary-row:hover td {
+  background: #fcf8f3;
 }
 
-.track-summary-row:focus {
+.track-summary-row:focus td,
+.track-summary-row:focus-visible td {
+  background: #fcf8f3;
+  box-shadow: inset 0 0 0 1px rgba(248, 184, 103, 0.28);
   outline: none;
-  background-color: #ececec;
 }
 
-.track-summary-title {
-  font-weight: 600;
+.track-summary-row-expanded td {
+  background: #faf4ee;
 }
 
 .track-detail-row td {
-  background-color: #f4f4f4;
+  background-color: #f8f1e8;
+  border-bottom: none;
   padding: 0;
 }
 
 .track-detail-card {
-  padding: 0.9rem 1rem 1rem;
+  padding: 1rem 1rem 1.1rem;
+}
+
+.track-detail-meta {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.track-detail-stat {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(88, 69, 52, 0.08);
+  border-radius: 16px;
+  padding: 0.85rem 0.95rem;
+}
+
+.track-detail-stat-label {
+  color: #8b7868;
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+
+.track-detail-stat strong {
+  color: #2f241d;
+  font-size: 1rem;
 }
 
 .track-detail-link-row {
@@ -111,8 +131,17 @@ td {
   word-break: break-word;
 }
 
+.track-detail-link-row strong {
+  color: #5d5046;
+}
+
 .track-detail-link-content {
+  color: #3f332a;
   min-width: 0;
+}
+
+.track-detail-link-content a {
+  color: #356fd0;
 }
 
 .track-delete-btn {
@@ -127,10 +156,10 @@ td {
 
 .track-history-graph-card {
   background-color: white;
-  border: 1px solid #d8d8d8;
-  border-radius: 6px;
+  border: 1px solid rgba(88, 69, 52, 0.12);
+  border-radius: 18px;
   overflow: hidden;
-  padding: 0.35rem 0.35rem 0.1rem;
+  padding: 0.45rem 0.45rem 0.15rem;
 }
 
 .track-history-graph {
@@ -156,7 +185,7 @@ td {
 .track-history-step-line,
 .track-history-step-vertical {
   fill: none;
-  stroke: #68b9f0;
+  stroke: #d58b29;
   stroke-linejoin: miter;
   stroke-linecap: square;
   stroke-width: 3;
@@ -169,41 +198,34 @@ td {
   font-weight: 500;
 }
 
-/* Alternate row colors */
-tbody tr:nth-child(odd) {
-  background-color: #f9f9f9;
-}
-
-tbody tr:nth-child(even) {
-  background-color: #e0e0e0;
-}
-
-/* Style for active rows */
-tr.lower {
-  background-color: rgb(157, 255, 157);
-}
-
-/* Style for inactive rows */
-tr.higher {
-  background-color: rgb(255, 141, 141);
-}
-
 @media (max-width: 700px) {
-  table {
-    width: 95%; /* Expand to 100% for smaller screens */
-  }
   .hide-on-mobile {
     display: none;
   }
+
   .track-detail-link-row {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .track-detail-meta {
+    grid-template-columns: 1fr;
+  }
 }
+
 @media (max-width: 400px) {
-  table {
-    align-self: baseline;
-    margin: 0.2rem;
+  .my-tracks-main {
+    padding-inline: 0.65rem;
+  }
+}
+
+@media (max-width: 580px) {
+  .track-detail-row td {
+    display: block;
+  }
+
+  .track-detail-row td::before {
+    content: none;
   }
 }
 /****************************/

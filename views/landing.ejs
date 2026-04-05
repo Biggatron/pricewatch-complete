@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <%- include('partials/head'); %>
-  <link rel="stylesheet" href="/css/landing.css?v=20260404-1" type="text/css">
+  <link rel="stylesheet" href="/css/dashboard.css?v=20260405-1" type="text/css">
+  <link rel="stylesheet" href="/css/landing.css?v=20260405-1" type="text/css">
 </head>
 <body class="body-container">
 
@@ -43,59 +44,94 @@
     </div>
 
     <div class="landing-visual">
-      <div class="landing-shot">
-        <div class="landing-shot-toolbar">
-          <span class="landing-shot-dot landing-shot-dot-red"></span>
-          <span class="landing-shot-dot landing-shot-dot-amber"></span>
-          <span class="landing-shot-dot landing-shot-dot-green"></span>
-          <div class="landing-shot-url">pricewatcher.app/my-tracks</div>
+      <div class="dashboard-window dashboard-window-demo">
+        <div class="dashboard-toolbar">
+          <span class="dashboard-toolbar-dot dashboard-toolbar-dot-red"></span>
+          <span class="dashboard-toolbar-dot dashboard-toolbar-dot-amber"></span>
+          <span class="dashboard-toolbar-dot dashboard-toolbar-dot-green"></span>
+          <div class="dashboard-toolbar-url">pricewatcher.birgirs.com/my-tracks</div>
         </div>
-        <div class="landing-shot-content">
-          <div class="landing-shot-header">
+        <div class="dashboard-content">
+          <div class="dashboard-header">
             <div>
-              <p class="landing-shot-label">Example dashboard</p>
+              <p class="dashboard-label">Example dashboard</p>
               <h2>My tracked products</h2>
+              <p class="dashboard-subtitle">The real dashboard uses the same structure, with expandable rows for link and price history details.</p>
             </div>
-            <div class="landing-shot-summary">
+            <div class="dashboard-summary">
               <strong>4</strong>
               <span>active tracks</span>
             </div>
           </div>
 
-          <div class="landing-shot-table">
-            <div class="landing-shot-row landing-shot-row-head">
-              <span>Product</span>
-              <span>Original</span>
-              <span>Current</span>
-              <span>Status</span>
-            </div>
-            <div class="landing-shot-row">
-              <span>Nintendo Switch OLED</span>
-              <span>54,990</span>
-              <span class="landing-price-drop">49,990</span>
-              <span class="landing-status-drop">Dropped</span>
-            </div>
-            <div class="landing-shot-row">
-              <span>Sony WH-1000XM5</span>
-              <span>59,999</span>
-              <span class="landing-price-drop">52,490</span>
-              <span class="landing-status-drop">Dropped</span>
-            </div>
-            <div class="landing-shot-row">
-              <span>Dyson V15 Detect</span>
-              <span>119,990</span>
-              <span>119,990</span>
-              <span class="landing-status-flat">Steady</span>
-            </div>
-            <div class="landing-shot-row">
-              <span>Apple Watch Series 10</span>
-              <span>74,990</span>
-              <span class="landing-price-rise">79,990</span>
-              <span class="landing-status-rise">Higher</span>
-            </div>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table" aria-label="Example tracked products">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Original</th>
+                  <th>Current</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Product">
+                    <span class="dashboard-product-name">Nintendo Switch OLED</span>
+                    <span class="dashboard-product-meta">elko.is &middot; Added Jan 12, 2026</span>
+                  </td>
+                  <td class="dashboard-number-cell" data-label="Original">54,990</td>
+                  <td class="dashboard-number-cell" data-label="Current">
+                    <span class="dashboard-price-pill dashboard-price-drop">49,990</span>
+                  </td>
+                  <td data-label="Status">
+                    <span class="dashboard-status-pill dashboard-status-drop">Dropped</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label="Product">
+                    <span class="dashboard-product-name">Sony WH-1000XM5</span>
+                    <span class="dashboard-product-meta">ht.is &middot; Added Feb 4, 2026</span>
+                  </td>
+                  <td class="dashboard-number-cell" data-label="Original">59,999</td>
+                  <td class="dashboard-number-cell" data-label="Current">
+                    <span class="dashboard-price-pill dashboard-price-drop">52,490</span>
+                  </td>
+                  <td data-label="Status">
+                    <span class="dashboard-status-pill dashboard-status-drop">Dropped</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label="Product">
+                    <span class="dashboard-product-name">Dyson V15 Detect</span>
+                    <span class="dashboard-product-meta">rafha.is &middot; Added Mar 9, 2026</span>
+                  </td>
+                  <td class="dashboard-number-cell" data-label="Original">119,990</td>
+                  <td class="dashboard-number-cell" data-label="Current">
+                    <span class="dashboard-price-pill dashboard-price-flat">119,990</span>
+                  </td>
+                  <td data-label="Status">
+                    <span class="dashboard-status-pill dashboard-status-flat">Steady</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label="Product">
+                    <span class="dashboard-product-name">Apple Watch Series 10</span>
+                    <span class="dashboard-product-meta">ormsson.is &middot; Added Mar 14, 2026</span>
+                  </td>
+                  <td class="dashboard-number-cell" data-label="Original">74,990</td>
+                  <td class="dashboard-number-cell" data-label="Current">
+                    <span class="dashboard-price-pill dashboard-price-rise">79,990</span>
+                  </td>
+                  <td data-label="Status">
+                    <span class="dashboard-status-pill dashboard-status-rise">Higher</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <div class="landing-shot-note">
+          <div class="dashboard-note">
             <strong>What you get:</strong> a quick read on whether it is finally time to buy, wait, or keep watching.
           </div>
         </div>

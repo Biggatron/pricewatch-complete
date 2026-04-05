@@ -2,71 +2,169 @@
 <html lang="en">
 <head>
   <%- include('partials/head'); %>
+  <link rel="stylesheet" href="/css/dashboard.css?v=20260405-1" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260405-1" type="text/css">
 </head>
 <body class="body-container">
 
+<%
+  const priceFormatter = new Intl.NumberFormat('en-US');
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+  const formatPrice = (value) => {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? priceFormatter.format(numericValue) : value;
+  };
+  const formatDate = (value) => {
+    if (!value) {
+      return 'N/A';
+    }
+
+    const parsedDate = new Date(value);
+    return Number.isNaN(parsedDate.getTime()) ? 'N/A' : dateFormatter.format(parsedDate);
+  };
+  const getHost = (value) => {
+    try {
+      return new URL(value).hostname.replace(/^www\./, '');
+    } catch (error) {
+      return 'Tracked product';
+    }
+  };
+  const getPriceToneClass = (track) => {
+    if (Number(track.curr_price) < Number(track.orig_price)) {
+      return 'dashboard-price-drop';
+    }
+
+    if (Number(track.curr_price) > Number(track.orig_price)) {
+      return 'dashboard-price-rise';
+    }
+
+    return 'dashboard-price-flat';
+  };
+  const getStatus = (track) => {
+    if (!track.active) {
+      return {
+        label: 'Inactive',
+        toneClass: 'dashboard-status-muted'
+      };
+    }
+
+    if (Number(track.curr_price) < Number(track.orig_price)) {
+      return {
+        label: 'Dropped',
+        toneClass: 'dashboard-status-drop'
+      };
+    }
+
+    if (Number(track.curr_price) > Number(track.orig_price)) {
+      return {
+        label: 'Higher',
+        toneClass: 'dashboard-status-rise'
+      };
+    }
+
+    return {
+      label: 'Steady',
+      toneClass: 'dashboard-status-flat'
+    };
+  };
+  const trackList = Array.isArray(tracks) ? tracks : [];
+  const activeTrackCount = trackList.filter((track) => track.active).length;
+%>
+
 <header>
   <%- include('partials/header', {navItem: 'my-tracks'}); %>
-  <link rel="stylesheet" href="/css/track.css?v=20260403-2" type="text/css">
 </header>
 
-<main>  
-  <div class="table-wrapper">
-    <table id="track-table">
-      <thead>
-        <tr>
-          <th>Product Name</th>
-          <th>Original Price</th>
-          <th>Current Price</th>
-          <th>Active</th>
-          <th class="hide-on-mobile">Start Date</th>
-          <th class="hide-on-mobile">Change Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% 
-          if (!tracks || tracks.length === 0) { 
-        %>
-          <tr>
-            <td colspan="6">No tracks to display</td>
-          </tr>
-        <% 
-          } else { 
-            tracks.forEach(track => { 
-        %>
-          <tr class="track-summary-row" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
-            <td>
-              <div class="track-summary-title"><%= track.product_name %></div>
-            </td>
-            <td><%= track.orig_price %></td>
-            <td style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
-              <%= track.curr_price %>
-            </td>
-            <td><%= track.active ? 'Yes' : 'No' %></td>
-            <td class="hide-on-mobile"><%= new Date(track.created_at).toLocaleDateString() %></td>
-            <td class="hide-on-mobile"><%= new Date(track.last_modified_at).toLocaleDateString() %></td>
-          </tr>
-          <tr class="track-detail-row display-none" data-track-detail-row="<%= track.id %>">
-            <td colspan="6">
-              <div class="track-detail-card">
-                <p class="track-detail-link-row">
-                  <span class="track-detail-link-content">
-                    <strong>Original link:</strong>
-                    <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
-                  </span>
-                  <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
-                </p>
-                <%- include('partials/track-history-graph', { track }); %>
-              </div>
-            </td>
-          </tr>
-        <% 
-            }); 
-          } 
-        %>
-      </tbody>
-    </table>
-  </div>
+<main class="my-tracks-main">
+  <section class="my-tracks-shell">
+    <div class="dashboard-window my-tracks-window">
+      <div class="dashboard-content">
+        <div class="dashboard-header">
+          <div>
+            <h2>My tracked products</h2>
+            <p class="dashboard-subtitle">Click any row to open the original product link, review the latest tracking details, and inspect the price history chart.</p>
+          </div>
+          <div class="dashboard-summary">
+            <strong><%= activeTrackCount %></strong>
+            <span>active tracks</span>
+            <small><%= trackList.length %> total saved</small>
+          </div>
+        </div>
+
+        <% if (trackList.length === 0) { %>
+          <div class="dashboard-empty-state">
+            <h3>No tracks yet</h3>
+            <p>Add your first product and Pricewatcher will start monitoring it for changes.</p>
+            <a class="btn" href="/">Start a new track</a>
+          </div>
+        <% } else { %>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table my-tracks-table" id="track-table" aria-label="Tracked products">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Original</th>
+                  <th>Current</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% trackList.forEach((track) => {
+                  const status = getStatus(track);
+                %>
+                  <tr class="track-summary-row" data-track-toggle="<%= track.id %>" tabindex="0" role="button" aria-expanded="false">
+                    <td data-label="Product">
+                      <span class="dashboard-product-name"><%= track.product_name %></span>
+                      <span class="dashboard-product-meta"><%= getHost(track.price_url) %> &middot; Added <%= formatDate(track.created_at) %></span>
+                    </td>
+                    <td class="dashboard-number-cell" data-label="Original"><%= formatPrice(track.orig_price) %></td>
+                    <td class="dashboard-number-cell" data-label="Current">
+                      <span class="dashboard-price-pill <%= getPriceToneClass(track) %>"><%= formatPrice(track.curr_price) %></span>
+                    </td>
+                    <td data-label="Status">
+                      <span class="dashboard-status-pill <%= status.toneClass %>"><%= status.label %></span>
+                    </td>
+                  </tr>
+                  <tr class="track-detail-row display-none" data-track-detail-row="<%= track.id %>">
+                    <td colspan="4">
+                      <div class="track-detail-card">
+                        <div class="track-detail-meta">
+                          <div class="track-detail-stat">
+                            <span class="track-detail-stat-label">Tracking</span>
+                            <strong><%= track.active ? 'Active' : 'Inactive' %></strong>
+                          </div>
+                          <div class="track-detail-stat">
+                            <span class="track-detail-stat-label">Start date</span>
+                            <strong><%= formatDate(track.created_at) %></strong>
+                          </div>
+                          <div class="track-detail-stat">
+                            <span class="track-detail-stat-label">Last change</span>
+                            <strong><%= formatDate(track.last_modified_at) %></strong>
+                          </div>
+                        </div>
+                        <p class="track-detail-link-row">
+                          <span class="track-detail-link-content">
+                            <strong>Original link:</strong>
+                            <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
+                          </span>
+                          <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
+                        </p>
+                        <%- include('partials/track-history-graph', { track }); %>
+                      </div>
+                    </td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </section>
 </main>
 
 <footer>

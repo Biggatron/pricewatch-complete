@@ -1,0 +1,348 @@
+.dashboard-window {
+  background: linear-gradient(180deg, #fffdfa 0%, #f5f0ea 100%);
+  border: 1px solid rgba(72, 54, 39, 0.1);
+  border-radius: 28px;
+  box-shadow:
+    0 20px 50px rgba(57, 41, 26, 0.14),
+    0 8px 20px rgba(57, 41, 26, 0.08);
+  overflow: hidden;
+}
+
+.dashboard-toolbar {
+  align-items: center;
+  background: #2e2a28;
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.95rem 1rem;
+}
+
+.dashboard-toolbar-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 12px;
+  width: 12px;
+}
+
+.dashboard-toolbar-dot-red {
+  background: #ff6b57;
+}
+
+.dashboard-toolbar-dot-amber {
+  background: #ffbd2f;
+}
+
+.dashboard-toolbar-dot-green {
+  background: #28c840;
+}
+
+.dashboard-toolbar-url {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.82rem;
+  margin-left: 0.45rem;
+  padding: 0.5rem 0.85rem;
+}
+
+.dashboard-content {
+  padding: 1.35rem;
+}
+
+.dashboard-header {
+  align-items: end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.dashboard-label {
+  color: #907966;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.4rem;
+  text-transform: uppercase;
+}
+
+.dashboard-header h2 {
+  color: #2c221c;
+  font-size: 1.55rem;
+  margin: 0;
+}
+
+.dashboard-subtitle {
+  color: #6f6259;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin: 0.5rem 0 0;
+  max-width: 52ch;
+}
+
+.dashboard-summary {
+  background: #fff;
+  border: 1px solid rgba(69, 52, 37, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 10px 24px rgba(72, 54, 39, 0.08);
+  color: #2f8f5b;
+  min-width: 88px;
+  padding: 0.8rem 0.9rem;
+  text-align: center;
+}
+
+.dashboard-summary strong {
+  display: block;
+  font-size: 1.5rem;
+}
+
+.dashboard-summary span {
+  color: #6d5c4f;
+  display: block;
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
+}
+
+.dashboard-summary small {
+  color: #8d7a6a;
+  display: block;
+  font-size: 0.76rem;
+  margin-top: 0.25rem;
+}
+
+.dashboard-table-wrap {
+  background: #ffffff;
+  border: 1px solid rgba(78, 60, 42, 0.08);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.dashboard-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.dashboard-table thead th {
+  background: #2d241d;
+  border: none;
+  color: #f8f4ef;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.95rem 1rem;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.dashboard-table thead th:first-child {
+  width: 46%;
+}
+
+.dashboard-table thead th:nth-child(2),
+.dashboard-table thead th:nth-child(3),
+.dashboard-table thead th:nth-child(4) {
+  width: 18%;
+}
+
+.dashboard-table tbody tr {
+  background: #fff;
+}
+
+.dashboard-table tbody td {
+  border: none;
+  color: #43362d;
+  padding: 1rem;
+  vertical-align: middle;
+}
+
+.dashboard-table tbody tr:not(:last-child) td {
+  border-bottom: 1px solid rgba(95, 75, 56, 0.08);
+}
+
+.dashboard-product-name {
+  color: #2f241d;
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.dashboard-product-meta {
+  color: #8b7868;
+  display: block;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin-top: 0.2rem;
+}
+
+.dashboard-number-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dashboard-price-pill,
+.dashboard-status-pill {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.5rem 0.8rem;
+  white-space: nowrap;
+}
+
+.dashboard-price-drop,
+.dashboard-status-drop {
+  background: rgba(47, 143, 91, 0.12);
+  color: #2f8f5b;
+}
+
+.dashboard-price-rise,
+.dashboard-status-rise {
+  background: rgba(200, 75, 67, 0.12);
+  color: #c84b43;
+}
+
+.dashboard-price-flat,
+.dashboard-status-flat {
+  background: rgba(141, 111, 71, 0.12);
+  color: #8d6f47;
+}
+
+.dashboard-status-muted {
+  background: rgba(109, 92, 79, 0.12);
+  color: #6d5c4f;
+}
+
+.dashboard-note {
+  color: #5d5046;
+  font-size: 0.94rem;
+  line-height: 1.6;
+  margin-top: 1rem;
+  padding: 0 0.15rem;
+}
+
+.dashboard-empty-state {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed rgba(98, 78, 62, 0.2);
+  border-radius: 20px;
+  color: #5d5046;
+  margin-top: 0.2rem;
+  padding: 2rem 1.4rem;
+  text-align: center;
+}
+
+.dashboard-empty-state h3 {
+  color: #2f241d;
+  font-size: 1.2rem;
+  margin: 0 0 0.55rem;
+}
+
+.dashboard-empty-state p {
+  margin: 0;
+}
+
+.dashboard-empty-state .btn {
+  display: inline-block;
+  margin-top: 1rem;
+  min-width: 180px;
+  text-decoration: none;
+}
+
+@media (max-width: 760px) {
+  .dashboard-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-toolbar-url {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .dashboard-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-summary {
+    min-width: 0;
+  }
+
+  .dashboard-table thead th:first-child {
+    width: 40%;
+  }
+
+  .dashboard-table thead th:nth-child(2),
+  .dashboard-table thead th:nth-child(3),
+  .dashboard-table thead th:nth-child(4) {
+    width: 20%;
+  }
+
+  .dashboard-table thead th,
+  .dashboard-table tbody td {
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (max-width: 580px) {
+  .dashboard-content {
+    padding: 1rem;
+  }
+
+  .dashboard-table {
+    display: block;
+  }
+
+  .dashboard-table thead {
+    display: none;
+  }
+
+  .dashboard-table tbody {
+    display: block;
+  }
+
+  .dashboard-table tbody tr {
+    display: block;
+  }
+
+  .dashboard-table tbody tr:not(:last-child) td {
+    border-bottom: none;
+  }
+
+  .dashboard-table tbody td {
+    display: flex;
+    gap: 0.9rem;
+    justify-content: space-between;
+    padding: 0.75rem 0.9rem;
+    text-align: right;
+  }
+
+  .dashboard-table tbody td::before {
+    color: #8b7868;
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .dashboard-table tbody td:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding-top: 0.95rem;
+    text-align: left;
+  }
+
+  .dashboard-table tbody td:first-child::before {
+    content: none;
+  }
+
+  .dashboard-number-cell,
+  .dashboard-price-pill,
+  .dashboard-status-pill {
+    justify-content: flex-end;
+  }
+}

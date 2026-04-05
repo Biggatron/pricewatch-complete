@@ -1702,7 +1702,7 @@ async function findPriceFromDiv(html, track) {
 
 async function handleMatchedPrice(match, track) {
   // If tracked price has changed we update database and send email to user
-  if (match !== track.curr_price) {
+  if (!arePricesEqual(match, track.curr_price)) {
     await updatePrice(match, track);
     const priceDirection = Number(match) < Number(track.curr_price)
       ? 'lower'
@@ -2142,7 +2142,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
 
   let tracks = [];
   const jsonLdProduct = extractProductDataFromJsonLd(html);
-  if (jsonLdProduct && isValidMatchedPrice(jsonLdProduct.price) && jsonLdProduct.price === trackRequest.orig_price) {
+  if (jsonLdProduct && isValidMatchedPrice(jsonLdProduct.price) && arePricesEqual(jsonLdProduct.price, trackRequest.orig_price)) {
     console.info('[crawler] Found original price in JSON-LD product schema', {
       url: trackRequest.price_url,
       price: jsonLdProduct.price
@@ -2158,7 +2158,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
 
   if (tracks.length === 0) {
     const nextDataProduct = extractProductDataFromNextData(html);
-    if (nextDataProduct && isValidMatchedPrice(nextDataProduct.price) && nextDataProduct.price === trackRequest.orig_price) {
+    if (nextDataProduct && isValidMatchedPrice(nextDataProduct.price) && arePricesEqual(nextDataProduct.price, trackRequest.orig_price)) {
       console.info('[crawler] Found original price in Next.js __NEXT_DATA__ payload', {
         url: trackRequest.price_url,
         price: nextDataProduct.price
@@ -2189,7 +2189,7 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     let htmlPriceClean = extractNumber(htmlPrice);
     
     // If element value matches price given by user it get tracked
-    if (htmlPriceClean === trackRequest.orig_price) {
+    if (arePricesEqual(htmlPriceClean, trackRequest.orig_price)) {
       
       // If price string is not found in html we try to replace spaces with HTML word breaks 
       let htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
@@ -3141,7 +3141,70 @@ async function getEmailRetryDelayMs() {
 }
 
 function extractNumber(price) {
-  return price.replace(/\D/g,'');
+  const rawValue = String(price == null ? '' : price).trim();
+  if (!rawValue) {
+    return '';
+  }
+
+  const cleanedValue = rawValue
+    .replace(/\s+/g, '')
+    .replace(/[^\d.,-]/g, '')
+    .replace(/(?!^)-/g, '');
+
+  if (!cleanedValue) {
+    return '';
+  }
+
+  const commaCount = (cleanedValue.match(/,/g) || []).length;
+  const dotCount = (cleanedValue.match(/\./g) || []).length;
+  let normalized = cleanedValue;
+
+  if (commaCount > 0 && dotCount > 0) {
+    const lastCommaIndex = normalized.lastIndexOf(',');
+    const lastDotIndex = normalized.lastIndexOf('.');
+    const decimalSeparator = lastCommaIndex > lastDotIndex ? ',' : '.';
+    const thousandsSeparator = decimalSeparator === ',' ? '.' : ',';
+
+    normalized = normalized.split(thousandsSeparator).join('');
+    if (decimalSeparator === ',') {
+      normalized = normalized.replace(',', '.');
+    }
+  } else if (commaCount > 0 || dotCount > 0) {
+    const separator = commaCount > 0 ? ',' : '.';
+    const parts = normalized.split(separator);
+
+    if (parts.length === 2) {
+      const trailingDigits = parts[1];
+      if (trailingDigits.length >= 1 && trailingDigits.length <= 2) {
+        normalized = `${parts[0]}.${trailingDigits}`;
+      } else {
+        normalized = parts.join('');
+      }
+    } else {
+      const trailingDigits = parts[parts.length - 1];
+      if (trailingDigits.length >= 1 && trailingDigits.length <= 2) {
+        normalized = `${parts.slice(0, -1).join('')}.${trailingDigits}`;
+      } else {
+        normalized = parts.join('');
+      }
+    }
+  }
+
+  normalized = normalized.replace(/(?!^)-/g, '');
+
+  if (normalized.startsWith('.')) {
+    normalized = `0${normalized}`;
+  }
+
+  if (normalized.startsWith('-.')) {
+    normalized = normalized.replace('-.', '-0.');
+  }
+
+  if (!isNumeric(normalized)) {
+    return '';
+  }
+
+  return normalized;
 }
 
 function escapeRegex(string) {
@@ -3149,11 +3212,21 @@ function escapeRegex(string) {
 }
 
 function isNumeric(value) {
-  return /^\d+$/.test(value);
+  return /^-?\d+(?:\.\d+)?$/.test(String(value));
 }
 
 function isValidMatchedPrice(value) {
-  return isNumeric(value) && value.length <= 20 && Number(value) <= MAX_MATCH_PRICE;
+  const normalizedValue = String(value == null ? '' : value);
+  const digitCount = normalizedValue.replace(/\D/g, '').length;
+  return isNumeric(normalizedValue) && digitCount <= 20 && Number(normalizedValue) <= MAX_MATCH_PRICE;
+}
+
+function arePricesEqual(left, right) {
+  if (!isNumeric(left) || !isNumeric(right)) {
+    return false;
+  }
+
+  return Number(left) === Number(right);
 }
 
 async function shouldSaveHtml(action, failedOnly) {

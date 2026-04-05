@@ -3,6 +3,7 @@ const query = require('../db/db');
 const GoogleStrategy = require('passport-google-oauth2').Strategy;
 const LocalStrategy = require('passport-local').Strategy;
 const crypto  = require('crypto');
+const { attachGuestTracksToUserByEmail } = require('../utilities/user-track-assignment');
 
 const keys = require('./keys');
   
@@ -37,10 +38,33 @@ passport.use(new GoogleStrategy({
   },
   async function(request, accessToken, refreshToken, profile, done) {
     // Check if user exists in database
-    const result = await query(
+    const googleResult = await query(
       'SELECT * FROM user_account WHERE google_id = $1',
       [profile.id]
     );
+    let result = googleResult;
+
+    if (googleResult.rows.length === 0 && profile.email) {
+      const existingEmailResult = await query(
+        'SELECT * FROM user_account WHERE LOWER(email) = $1 ORDER BY id ASC LIMIT 1',
+        [String(profile.email || '').trim().toLowerCase()]
+      );
+
+      if (existingEmailResult.rows.length !== 0) {
+        result = await query(
+          `UPDATE user_account
+           SET google_id = $1,
+               is_email_verified = TRUE,
+               name = COALESCE(NULLIF(name, ''), $2),
+               last_modified_at = $3,
+               last_modified_by = id
+           WHERE id = $4
+           RETURNING *`,
+          [profile.id, profile.displayName, new Date(), existingEmailResult.rows[0].id]
+        );
+      }
+    }
+
     if (result.rows.length === 0){
       console.info('[auth] Creating new Google user', {
         email: profile.email,
@@ -48,14 +72,17 @@ passport.use(new GoogleStrategy({
       });
       // User does not exist a new one is created
       const result = await query(
-        'INSERT INTO user_account (google_id, name, email, created_at) VALUES ($1, $2, $3, $4) RETURNING *',
-        [profile.id, profile.displayName, profile.email, new Date()]
+        `INSERT INTO user_account (google_id, name, email, is_email_verified, created_at, last_modified_at)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [profile.id, profile.displayName, profile.email, true, new Date(), new Date()]
       );
       if (result.rows.length === 0) {
-          res.status(500).json({
-              message: 'Couldnt create user'
-          });
+          return done(new Error('Could not create user'));
       } else {
+        await attachGuestTracksToUserByEmail({
+          userId: result.rows[0].id,
+          email: result.rows[0].email
+        });
         var user = {
           id : result.rows[0].id,
           name : result.rows[0].name,
@@ -81,8 +108,8 @@ passport.use(new LocalStrategy({
     let email = username;
     console.info('[auth] Local sign-in attempt', { email });
     const result = await query(
-      'SELECT * FROM user_account WHERE email = $1',
-      [email]
+      'SELECT * FROM user_account WHERE LOWER(email) = $1 ORDER BY id ASC LIMIT 1',
+      [String(email || '').trim().toLowerCase()]
     );
     if (!result.rows[0]) {
       return done(null, false, { message: 'Incorrect username or password.' });
@@ -100,9 +127,13 @@ passport.use(new LocalStrategy({
       return done(null, false, { message: 'Email is associated with a google account' });
     };
 
+    if (!row.is_email_verified) {
+      return done(null, false, { message: 'Please verify your email address before logging in. If you need a new verification email, sign up again with the same email.' });
+    }
+
     // Validate password
     crypto.pbkdf2(password, row.salt, 310000, 32, 'sha256', function(err, hashedPassword) {
-      if (err) { return cb(err); }
+      if (err) { return done(err); }
       if (!crypto.timingSafeEqual(row.hashed_password, hashedPassword)) {
         return done(null, false, { message: 'Incorrect username or password.' });
       }

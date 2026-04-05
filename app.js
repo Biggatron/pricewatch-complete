@@ -12,6 +12,8 @@ const errorHandler = require('./utilities/errorHandler');
 const { ensureAppConfigTable } = require('./utilities/app-config');
 const { initializeLogger } = require('./utilities/logger');
 const { ensureTrackSoftDeleteColumn } = require('./utilities/track-soft-delete');
+const { ensureTrackUniqueActiveIndex } = require('./utilities/track-uniqueness');
+const { ensureUserAuthSchema } = require('./utilities/user-auth-schema');
 
 initializeLogger();
 
@@ -86,6 +88,8 @@ server.listen(port, () => {
 
 initializeAppConfig();
 initializeTrackSoftDelete();
+initializeTrackUniqueness();
+initializeUserAuthSchema();
 
 async function initializeAppConfig() {
   try {
@@ -100,5 +104,21 @@ async function initializeTrackSoftDelete() {
     await ensureTrackSoftDeleteColumn();
   } catch (error) {
     console.error('[startup] Failed to initialize track soft delete column', error);
+  }
+}
+
+async function initializeTrackUniqueness() {
+  try {
+    await ensureTrackUniqueActiveIndex();
+  } catch (error) {
+    console.error('[startup] Failed to initialize track uniqueness', error);
+  }
+}
+
+async function initializeUserAuthSchema() {
+  try {
+    await ensureUserAuthSchema();
+  } catch (error) {
+    console.error('[startup] Failed to initialize user auth schema', error);
   }
 }

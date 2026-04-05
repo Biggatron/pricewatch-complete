@@ -51,10 +51,15 @@
   padding: 0.5rem 0.5rem;
   font-size: 1rem;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  outline: none;
+  transition: background-color 0.3s ease, box-shadow 0.15s ease;
 }
 .btn:hover {
   background-color: rgb(255, 168.2119760479, 53.7);
+}
+.btn:focus,
+.btn:focus-visible {
+  box-shadow: 0 0 0 2px rgba(248, 184, 103, 0.18);
 }
 @media (max-width: 700px) {
   .btn {
@@ -65,7 +70,8 @@
     padding: 0.6rem;
     font-size: 1.2rem;
     cursor: pointer;
-    transition: background-color 0.3s ease;
+    outline: none;
+    transition: background-color 0.3s ease, box-shadow 0.15s ease;
   }
   .btn:hover {
     background-color: rgb(255, 168.2119760479, 53.7);
@@ -79,10 +85,15 @@
   padding: 0.5rem 0.5rem;
   font-size: 1rem;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  outline: none;
+  transition: background-color 0.3s ease, box-shadow 0.15s ease;
 }
 .btn-google-blue:hover {
   background-color: rgb(36.705, 114.09, 242.295);
+}
+.btn-google-blue:focus,
+.btn-google-blue:focus-visible {
+  box-shadow: 0 0 0 2px rgba(248, 184, 103, 0.18);
 }
 
 /* Core css, HTML, Body*/
@@ -92,6 +103,30 @@
   height: 30px;
   vertical-align: middle;
   font-size: 16px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="color"]),
+select,
+textarea {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="color"]):focus,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="color"]):focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+button:focus,
+button:focus-visible,
+a.btn:focus,
+a.btn:focus-visible {
+  border-color: #f8b867;
+  box-shadow: 0 0 0 2px rgba(248, 184, 103, 0.18);
+  outline: none;
 }
 
 .full-width {

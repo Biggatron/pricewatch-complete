@@ -32,6 +32,10 @@ const apiAuthCheck = (req, res, next) => {
 
 // New track landing page
 router.get('/', (req, res) => {
+  if (!req.user) {
+    return res.render('landing', { user: req.user });
+  }
+
   res.render('new-track', { user: req.user });
 });
 
@@ -45,6 +49,10 @@ router.get('/tracklist', authCheck, async (req, res, next) => {
 });
 
 router.post('/preview', async (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Login or sign up to preview tracked products.' });
+  }
+
   const inputUrl = String((req.body && req.body.url) || '').trim();
   if (!inputUrl) {
     return res.status(400).json({ error: 'URL is required' });
@@ -65,12 +73,85 @@ router.post('/preview', async (req, res) => {
   }
 });
 
+router.post('/lookup', async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Login required' });
+  }
+
+  const inputUrl = String((req.body && req.body.url) || '').trim();
+  if (!inputUrl) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    await ensureTrackSoftDeleteColumn();
+
+    const sameUserResult = await query(
+      `SELECT id, curr_price, product_name
+       FROM track
+       WHERE user_id = $1
+         AND price_url = $2
+         AND deleted = FALSE
+       ORDER BY last_modified_at DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      [req.user.id, inputUrl]
+    );
+
+    if (sameUserResult.rows[0]) {
+      return res.status(200).json({
+        sameUserTrack: true,
+        otherUserTrack: false,
+        trackId: sameUserResult.rows[0].id,
+        currentPrice: sameUserResult.rows[0].curr_price,
+        productName: sameUserResult.rows[0].product_name || null,
+        message: 'You are already tracking this product',
+        code: 'TRACK_EXISTS'
+      });
+    }
+
+    const otherUserResult = await query(
+      `SELECT id, curr_price, product_name
+       FROM track
+       WHERE price_url = $1
+         AND deleted = FALSE
+       ORDER BY last_modified_at DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      [inputUrl]
+    );
+
+    if (otherUserResult.rows[0]) {
+      return res.status(200).json({
+        sameUserTrack: false,
+        otherUserTrack: true,
+        trackId: otherUserResult.rows[0].id,
+        currentPrice: otherUserResult.rows[0].curr_price,
+        productName: otherUserResult.rows[0].product_name || null
+      });
+    }
+
+    return res.status(200).json({
+      sameUserTrack: false,
+      otherUserTrack: false,
+      currentPrice: null,
+      productName: null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/', async (req, res, next) => {
   console.log('New track posted in background...');
 
+  if (!req.user) {
+    return res.status(401).json({
+      error: 'Login or sign up to start tracking prices.'
+    });
+  }
+
   const priceUrl = String((req.body && req.body.url) || '').trim();
   const originalPrice = crawler.extractNumber(String((req.body && req.body.price) || ''));
-  const email = String((req.body && req.body.email) || (req.user && req.user.email) || '').trim();
+  const email = String((req.user && req.user.email) || '').trim();
 
   if (!priceUrl) {
     return res.status(400).json({ error: 'URL is required' });

@@ -264,11 +264,11 @@
       <section class="admin-tab-panel <%= activeTab === 'tracks' ? 'is-active' : '' %>" data-tab-panel="tracks">
         <div class="admin-panel">
           <h2 class="admin-section-title">Track manager</h2>
-          <form class="admin-filter-form" method="GET" action="/admin">
-            <input type="hidden" name="tab" value="tracks">
+          <form class="admin-filter-form" method="GET" action="/admin" autocomplete="off">
+            <input type="hidden" name="tab" value="tracks" autocomplete="off">
             <label>
               <span>Search</span>
-              <input class="admin-input" type="text" name="track_search" value="<%= trackFilters.search %>" placeholder="Product, URL, user or email">
+              <input class="admin-input" type="text" name="track_search" value="<%= trackFilters.search %>" placeholder="Product, URL, user or email" autocomplete="off" spellcheck="false">
             </label>
             <label>
               <span>Active</span>
@@ -301,7 +301,7 @@
             </label>
             <label>
               <span>Max rows</span>
-              <input class="admin-input" type="number" name="track_max_rows" min="1" max="500" value="<%= trackFilters.maxRows %>">
+              <input class="admin-input" type="number" name="track_max_rows" min="1" max="500" value="<%= trackFilters.maxRows %>" autocomplete="off">
             </label>
             <div class="admin-filter-actions">
               <button class="btn btn-small" type="submit">Apply</button>
@@ -352,6 +352,7 @@
                           inputmode="numeric"
                           step="1"
                           value="<%= track.orig_price %>"
+                          autocomplete="off"
                           data-field="orig_price">
                       </td>
                       <td class="admin-price-cell" style="background-color: <%= track.curr_price < track.orig_price ? '#9dff9d' : track.curr_price > track.orig_price ? '#ff8d8d' : 'inherit' %>;">
@@ -362,6 +363,7 @@
                           inputmode="numeric"
                           step="1"
                           value="<%= track.curr_price %>"
+                          autocomplete="off"
                           data-field="curr_price">
                       </td>
                       <td>
@@ -369,6 +371,7 @@
                         <label class="admin-checkbox-label field-edit display-none">
                           <input
                             type="checkbox"
+                            autocomplete="off"
                             data-field="active"
                             <%= track.active ? 'checked' : '' %>>
                           <span><%= track.active ? 'Active' : 'Inactive' %></span>
@@ -446,6 +449,7 @@
                           <label class="admin-checkbox-label">
                             <input
                               type="checkbox"
+                              autocomplete="off"
                               data-config-field="value"
                               <%= config.parsed_value ? 'checked' : '' %>>
                             <span><%= config.parsed_value ? 'Enabled' : 'Disabled' %></span>
@@ -461,6 +465,9 @@
                             type="<%= config.data_type === 'integer' || config.data_type === 'number' ? 'number' : config.data_type === 'secret' ? 'password' : 'text' %>"
                             <%= config.data_type === 'integer' ? 'step="1"' : '' %>
                             value="<%= config.value == null ? '' : config.value %>"
+                            autocomplete="<%= config.data_type === 'secret' ? 'new-password' : 'off' %>"
+                            autocapitalize="off"
+                            spellcheck="false"
                             data-config-field="value">
                         <% } %>
                       </td>
@@ -548,11 +555,11 @@
         <div class="admin-panel">
           <h2 class="admin-section-title">Failed track logs</h2>
           <p class="admin-subtitle">Filtered rows from <code>failed_track_logs</code></p>
-          <form class="admin-filter-form" method="GET" action="/admin">
-            <input type="hidden" name="tab" value="failed-tracks">
+          <form class="admin-filter-form" method="GET" action="/admin" autocomplete="off">
+            <input type="hidden" name="tab" value="failed-tracks" autocomplete="off">
             <label>
               <span>Search</span>
-              <input class="admin-input" type="text" name="failed_search" value="<%= failedTrackFilters.search %>" placeholder="Domain, URL or price">
+              <input class="admin-input" type="text" name="failed_search" value="<%= failedTrackFilters.search %>" placeholder="Domain, URL or price" autocomplete="off" spellcheck="false">
             </label>
             <label>
               <span>Sort</span>
@@ -567,7 +574,7 @@
             </label>
             <label>
               <span>Max rows</span>
-              <input class="admin-input" type="number" name="failed_max_rows" min="1" max="500" value="<%= failedTrackFilters.maxRows %>">
+              <input class="admin-input" type="number" name="failed_max_rows" min="1" max="500" value="<%= failedTrackFilters.maxRows %>" autocomplete="off">
             </label>
             <div class="admin-filter-actions">
               <button class="btn btn-small" type="submit">Apply</button>
@@ -639,11 +646,11 @@
           <div class="admin-inline-actions">
             <button class="btn btn-small" onclick="sendPendingEmails()">Send pending emails</button>
           </div>
-          <form class="admin-filter-form" method="GET" action="/admin">
-            <input type="hidden" name="tab" value="emails">
+          <form class="admin-filter-form" method="GET" action="/admin" autocomplete="off">
+            <input type="hidden" name="tab" value="emails" autocomplete="off">
             <label>
               <span>Search</span>
-              <input class="admin-input" type="text" name="email_search" value="<%= emailFilters.search %>" placeholder="Product, email, subject or error">
+              <input class="admin-input" type="text" name="email_search" value="<%= emailFilters.search %>" placeholder="Product, email, subject or error" autocomplete="off" spellcheck="false">
             </label>
             <label>
               <span>Status</span>
@@ -662,6 +669,8 @@
                 <option value="all" <%= emailFilters.emailType === 'all' ? 'selected' : '' %>>All</option>
                 <option value="price_change" <%= emailFilters.emailType === 'price_change' ? 'selected' : '' %>>Price change</option>
                 <option value="track_inactive" <%= emailFilters.emailType === 'track_inactive' ? 'selected' : '' %>>Track inactive</option>
+                <option value="email_verification" <%= emailFilters.emailType === 'email_verification' ? 'selected' : '' %>>Email verification</option>
+                <option value="password_reset" <%= emailFilters.emailType === 'password_reset' ? 'selected' : '' %>>Password reset</option>
                 <option value="generic" <%= emailFilters.emailType === 'generic' ? 'selected' : '' %>>Generic</option>
               </select>
             </label>
@@ -680,7 +689,7 @@
             </label>
             <label>
               <span>Max rows</span>
-              <input class="admin-input" type="number" name="email_max_rows" min="1" max="500" value="<%= emailFilters.maxRows %>">
+              <input class="admin-input" type="number" name="email_max_rows" min="1" max="500" value="<%= emailFilters.maxRows %>" autocomplete="off">
             </label>
             <div class="admin-filter-actions">
               <button class="btn btn-small" type="submit">Apply</button>
@@ -864,6 +873,16 @@
       inputEl.className = 'admin-input';
       inputEl.name = field.key;
       inputEl.setAttribute('data-template-field', field.key);
+      inputEl.setAttribute(
+        'autocomplete',
+        field.type === 'email'
+          ? 'section-admin-email-template email'
+          : field.type === 'password'
+            ? 'new-password'
+            : 'off'
+      );
+      inputEl.setAttribute('autocapitalize', 'off');
+      inputEl.setAttribute('spellcheck', 'false');
 
       if (field.type !== 'textarea') {
         inputEl.type = field.type || 'text';

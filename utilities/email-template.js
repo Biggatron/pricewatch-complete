@@ -14,6 +14,9 @@ async function renderEmailTemplate(templateKey, data = {}) {
   const html = await renderTemplateFile('layout.ejs', {
     ...viewModel,
     accentColor: viewModel.accentColor || '#ffb758',
+    brandEyebrow: viewModel.brandEyebrow || 'Pricewatcher',
+    heroTitle: viewModel.heroTitle || 'Price update from your tracker',
+    footerText: viewModel.footerText || 'You are receiving this email because Pricewatcher is monitoring a product for you.',
     contentHtml
   });
   const text = await renderTemplateFile(renderer.textFile, viewModel);
@@ -92,6 +95,44 @@ const TEMPLATE_RENDERERS = {
           'a technical error',
           'another unknown reason'
         ]
+      };
+    }
+  },
+  email_verification: {
+    htmlFile: 'verify-email.ejs',
+    textFile: 'verify-email.txt.ejs',
+    buildViewModel(data) {
+      const name = String(data.name || 'there').trim();
+      const verificationUrl = String(data.verificationUrl || '').trim();
+
+      return {
+        name,
+        verificationUrl,
+        accentColor: '#2f8f5b',
+        brandEyebrow: 'Pricewatcher account',
+        heroTitle: 'Confirm your email address',
+        footerText: 'You are receiving this email because a Pricewatcher account was created with this email address.',
+        subject: 'Confirm your Pricewatcher email',
+        previewText: 'Confirm your email to activate your Pricewatcher account.'
+      };
+    }
+  },
+  password_reset: {
+    htmlFile: 'reset-password.ejs',
+    textFile: 'reset-password.txt.ejs',
+    buildViewModel(data) {
+      const name = String(data.name || 'there').trim();
+      const resetUrl = String(data.resetUrl || '').trim();
+
+      return {
+        name,
+        resetUrl,
+        accentColor: '#c84b43',
+        brandEyebrow: 'Pricewatcher account',
+        heroTitle: 'Reset your password',
+        footerText: 'You are receiving this email because a password reset was requested for your Pricewatcher account.',
+        subject: 'Reset your Pricewatcher password',
+        previewText: 'Use the secure link in this email to reset your Pricewatcher password.'
       };
     }
   }

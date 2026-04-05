@@ -4,11 +4,19 @@ async function handleResponse(response) {
   
   if (!response.ok) {
     // Handle different types of errors
-    const errorText = contentType && contentType.includes('application/json')
+    const errorBody = contentType && contentType.includes('application/json')
       ? await response.json()
       : await response.text();
-    const error = new Error(errorText || response.statusText);
+    const errorMessage = typeof errorBody === 'string'
+      ? errorBody
+      : (
+        (errorBody && (errorBody.message || errorBody.error)) ||
+        JSON.stringify(errorBody) ||
+        response.statusText
+      );
+    const error = new Error(errorMessage || response.statusText);
     error.status = response.status;
+    error.body = errorBody;
     throw error;
   }
 

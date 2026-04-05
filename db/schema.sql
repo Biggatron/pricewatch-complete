@@ -5,6 +5,14 @@ CREATE TABLE "user_account" (
   "name" varchar(128),
   "hashed_password" bytea,
   "salt" bytea,
+  "is_email_verified" boolean NOT NULL DEFAULT FALSE,
+  "email_verification_token_hash" varchar(128),
+  "email_verification_token_expires_at" timestamp,
+  "email_verification_last_sent_at" timestamp,
+  "email_verification_sent_window_started_at" timestamp,
+  "email_verification_sent_count" integer NOT NULL DEFAULT 0,
+  "password_reset_token_hash" varchar(128),
+  "password_reset_token_expires_at" timestamp,
   "created_at" timestamp NOT NULL DEFAULT now(),
   "last_modified_at" timestamp NOT NULL DEFAULT now(),
   "last_modified_by" integer,
@@ -169,6 +177,12 @@ CREATE TABLE track_change_history (
 CREATE INDEX preview_screenshot_cache_expires_at_idx
     ON preview_screenshot_cache ("expires_at");
 
+CREATE INDEX user_account_email_verification_token_hash_idx
+    ON user_account ("email_verification_token_hash");
+
+CREATE INDEX user_account_password_reset_token_hash_idx
+    ON user_account ("password_reset_token_hash");
+
 CREATE INDEX scheduled_job_runs_job_key_idx
     ON scheduled_job_runs ("job_key", "run_after_time" DESC, "id" DESC);
 
@@ -178,6 +192,11 @@ CREATE UNIQUE INDEX scheduled_job_runs_pending_job_key_idx
 
 CREATE INDEX track_change_history_track_id_changed_at_idx
     ON track_change_history ("track_id", "changed_at" DESC, "id" DESC);
+
+CREATE UNIQUE INDEX track_user_id_price_url_active_unique_idx
+    ON track ("user_id", "price_url")
+    WHERE "deleted" = FALSE
+      AND "user_id" IS NOT NULL;
 
 -- Add foreign keys
 ALTER TABLE "track" ADD FOREIGN KEY ("user_id") REFERENCES "user_account" ("id");

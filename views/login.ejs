@@ -26,12 +26,12 @@
         <div class="center-row-container">
           <input class="input-text" id="password" type="password" autocomplete="password" placeholder="Password">
         </div>
-        <p id=incorrectUsernameAndPassText style="color: red;"></p>
+        <p id="login-status" style="color: <%= messageType === 'error' ? 'red' : 'green' %>;"><%= message || '' %></p>
         <button class="btn-google-blue" onClick="login()">Login</button>
+        <p><a href="/auth/forgot-password">Forgot your password?</a></p>
       </div>
       Don't have an account yet?<a href="/auth/signup">Click here to signup!</a>
     </div>
-  </div>
   </div>
 </main>
 
@@ -44,7 +44,7 @@
 <script>
   
   let loaderEl = document.getElementById("loader");
-  let incorrectUsernameAndPassTextEl = document.getElementById("incorrectUsernameAndPassText");
+  let loginStatusEl = document.getElementById("login-status");
 
   function showLoader() {
     loaderEl.classList.remove('display-none');
@@ -54,10 +54,20 @@
     loaderEl.classList.add('display-none');
   }
 
+  function submitOnEnter(event, submitAction) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    submitAction();
+  }
+
   function login() {
     let email = document.getElementById('email').value;
     let password = document.getElementById('password').value;
-    incorrectUsernameAndPassText.innerText = ""; 
+    loginStatusEl.style.color = 'red';
+    loginStatusEl.innerText = "";
     
     let user = {
       email: email,
@@ -65,20 +75,23 @@
     }
 
     showLoader();
-    //try catch incorrect username og pass
     postData('/auth/local/login', user).then(response => {
       hideLoader();
-      if (response.redirected) { return };
-      if (response.status === 401) {
-        alert(response.message);
+      if (response && response.redirect) {
+        window.location.href = response.redirect;
       }
     }).catch(error => {
       hideLoader();
-      if (error === "Incorrect username or password") {
-        incorrectUsernameAndPassTextEl.innerText = error;
-      } else {
-        alert(error);
-      }
+      loginStatusEl.innerText = error;
     });
   }
+
+  ['email', 'password'].forEach((fieldId) => {
+    const inputEl = document.getElementById(fieldId);
+    if (!inputEl) {
+      return;
+    }
+
+    inputEl.addEventListener('keydown', (event) => submitOnEnter(event, login));
+  });
 </script>

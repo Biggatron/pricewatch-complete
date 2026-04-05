@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('partials/head'); %>
+  <link rel="stylesheet" href="/css/landing.css?v=20260404-1" type="text/css">
+</head>
+<body class="body-container">
+
+<header>
+  <%- include('partials/header', { navItem: 'landing' }); %>
+</header>
+
+<main class="landing-main">
+  <section class="landing-hero">
+    <div class="landing-copy">
+      <div class="landing-kicker">Waiting for a price drop? </div>
+      <h1>Get notified as soon as the price drops!</h1>
+      <p class="landing-lede">
+        Pricewatcher keeps an eye on the products you care about and gives you one clean place to see what moved up, what dropped, and what is worth buying now.
+      </p>
+      <div class="landing-actions">
+        <a class="btn landing-primary-action" href="/auth/signup">Create account</a>
+        <a class="btn landing-secondary-action" href="/auth/login">Log in</a>
+      </div>
+      <p class="landing-footnote">
+        Sign up or log in to start tracking prices!
+      </p>
+
+      <div class="landing-feature-grid">
+        <article class="landing-feature-card">
+          <h2>One watchlist</h2>
+          <p>Keep all your tracked products in a single place instead of scattering bookmarks across shops.</p>
+        </article>
+        <article class="landing-feature-card">
+          <h2>Clear price movement</h2>
+          <p>Get an email notification when a price change occurs to make sure you don't miss a good deal.</p>
+        </article>
+        <article class="landing-feature-card">
+          <h2>Fewer missed deals</h2>
+          <p>Let the service do the repetitive checking so you only pay attention when something actually changes.</p>
+        </article>
+      </div>
+    </div>
+
+    <div class="landing-visual">
+      <div class="landing-shot">
+        <div class="landing-shot-toolbar">
+          <span class="landing-shot-dot landing-shot-dot-red"></span>
+          <span class="landing-shot-dot landing-shot-dot-amber"></span>
+          <span class="landing-shot-dot landing-shot-dot-green"></span>
+          <div class="landing-shot-url">pricewatcher.app/my-tracks</div>
+        </div>
+        <div class="landing-shot-content">
+          <div class="landing-shot-header">
+            <div>
+              <p class="landing-shot-label">Example dashboard</p>
+              <h2>My tracked products</h2>
+            </div>
+            <div class="landing-shot-summary">
+              <strong>4</strong>
+              <span>active tracks</span>
+            </div>
+          </div>
+
+          <div class="landing-shot-table">
+            <div class="landing-shot-row landing-shot-row-head">
+              <span>Product</span>
+              <span>Original</span>
+              <span>Current</span>
+              <span>Status</span>
+            </div>
+            <div class="landing-shot-row">
+              <span>Nintendo Switch OLED</span>
+              <span>54,990</span>
+              <span class="landing-price-drop">49,990</span>
+              <span class="landing-status-drop">Dropped</span>
+            </div>
+            <div class="landing-shot-row">
+              <span>Sony WH-1000XM5</span>
+              <span>59,999</span>
+              <span class="landing-price-drop">52,490</span>
+              <span class="landing-status-drop">Dropped</span>
+            </div>
+            <div class="landing-shot-row">
+              <span>Dyson V15 Detect</span>
+              <span>119,990</span>
+              <span>119,990</span>
+              <span class="landing-status-flat">Steady</span>
+            </div>
+            <div class="landing-shot-row">
+              <span>Apple Watch Series 10</span>
+              <span>74,990</span>
+              <span class="landing-price-rise">79,990</span>
+              <span class="landing-status-rise">Higher</span>
+            </div>
+          </div>
+
+          <div class="landing-shot-note">
+            <strong>What you get:</strong> a quick read on whether it is finally time to buy, wait, or keep watching.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <%- include('partials/footer'); %>
+</footer>
+
+</body>
+</html>

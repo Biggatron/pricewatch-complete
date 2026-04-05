@@ -44,7 +44,6 @@
       </div>
     </div>
   </div>
-  </div>
 </main>
 
 <footer>
@@ -63,6 +62,15 @@
 
   function hideLoader() {
     loaderEl.classList.add('display-none');
+  }
+
+  function submitOnEnter(event, submitAction) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    submitAction();
   }
 
   function signUp() {
@@ -91,12 +99,28 @@
     showLoader();
     postData('/auth/local/signup', newUser).then(returnData => {
       hideLoader();
-      if (returnData.error) {
-        alert('signup failed')
-      } else {
-        window.location.href = '/profile';        
+      if (returnData && returnData.redirect) {
+        window.location.href = returnData.redirect;
+        return;
       }
-      console.log(returnData); // JSON data parsed by `data.json()` call
+
+      if (returnData && returnData.message) {
+        passwordErrorEl.style.color = 'green';
+        passwordErrorEl.innerText = returnData.message;
+      }
+    }).catch(error => {
+      hideLoader();
+      passwordErrorEl.style.color = 'red';
+      passwordErrorEl.innerText = error;
     });
   }
+
+  ['email', 'name', 'new-password', 'new-password-repeated'].forEach((fieldId) => {
+    const inputEl = document.getElementById(fieldId);
+    if (!inputEl) {
+      return;
+    }
+
+    inputEl.addEventListener('keydown', (event) => submitOnEnter(event, signUp));
+  });
 </script>

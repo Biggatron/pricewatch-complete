@@ -53,10 +53,21 @@
 .landing-primary-action,
 .landing-secondary-action {
   border-radius: 999px;
-  min-width: 150px;
-  padding: 0.85rem 1.3rem;
+  min-width: 132px;
+  padding: 0.78rem 1.15rem;
   text-align: center;
   text-decoration: none;
+}
+
+.landing-primary-action,
+.landing-primary-action:visited,
+.landing-primary-action:hover,
+.landing-primary-action:active,
+.landing-secondary-action,
+.landing-secondary-action:visited,
+.landing-secondary-action:hover,
+.landing-secondary-action:active {
+  color: #fffdfa;
 }
 
 .landing-primary-action {
@@ -80,6 +91,21 @@
   font-size: 0.96rem;
   line-height: 1.6;
   margin-top: 1rem;
+}
+
+.landing-mobile-preview {
+  display: none;
+  margin-top: 1.25rem;
+}
+
+.landing-mobile-preview-image {
+  border: 1px solid rgba(72, 54, 39, 0.12);
+  border-radius: 22px;
+  box-shadow:
+    0 18px 40px rgba(57, 41, 26, 0.12),
+    0 8px 18px rgba(57, 41, 26, 0.08);
+  display: block;
+  width: 100%;
 }
 
 .landing-feature-grid {
@@ -299,19 +325,83 @@
     padding-inline: 0.9rem;
   }
 
-  .landing-feature-grid {
-    grid-template-columns: 1fr;
+  .landing-hero {
+    gap: 1.4rem;
   }
 
-  .dashboard-window-demo {
-    transform: none;
-    width: 100%;
+  .landing-copy {
+    text-align: center;
+  }
+
+  .landing-lede {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .landing-actions {
+    justify-content: center;
+  }
+
+  .landing-actions .btn {
+    flex: 0 1 auto;
+  }
+
+  .landing-mobile-preview {
+    display: block;
+  }
+
+  .landing-footnote,
+  .landing-feature-grid {
+    display: none;
+  }
+
+  .landing-visual {
+    display: none;
   }
 }
 
 @media (max-width: 520px) {
+  .landing-main {
+    padding-top: 1.3rem;
+    padding-inline: 0.75rem;
+  }
+
   .landing-copy h1 {
     font-size: 2.25rem;
     max-width: none;
+  }
+
+  .landing-kicker {
+    margin-bottom: 0.7rem;
+  }
+
+  .landing-lede {
+    font-size: 1rem;
+    line-height: 1.6;
+    margin-top: 1rem;
+  }
+
+  .landing-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.55rem;
+    margin-top: 1.2rem;
+  }
+
+  .landing-actions .btn {
+    flex: 0 1 auto;
+    font-size: 0.95rem;
+    min-width: 124px;
+    padding: 0.72rem 0.95rem;
+    width: auto;
+  }
+
+  .landing-mobile-preview {
+    margin-top: 1rem;
+  }
+
+  .landing-mobile-preview-image {
+    border-radius: 18px;
   }
 }

@@ -1,0 +1,17 @@
+{
+  "name": "Pricewatcher",
+  "short_name": "Pricewatcher",
+  "description": "Monitor prices and keep your tracked products close at hand.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4ece2",
+  "theme_color": "#b96a2e",
+  "icons": [
+    {
+      "src": "/images/orange-brown-app-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    }
+  ]
+}

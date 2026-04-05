@@ -6,3 +6,4 @@ logs
 .history
 public/generated-previews
 .vscode/
+playwright-artifacts/

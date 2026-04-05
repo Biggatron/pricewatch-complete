@@ -8,6 +8,7 @@
     "watch:sass": "sass --no-source-map --watch scss/:public/css/",
     "setup": "node db/setup.js",
     "db:clear-transactional": "node db/clear-transactional-data.js",
+    "db:clear-preserve-config": "node db/clear-transactional-data.js --force --delete-users",
     "job:dispatch": "node scripts/cron-dispatcher.js",
     "job:crawler": "node scripts/run-job.js crawler",
     "job:preview-cleanup": "node scripts/run-job.js preview_cleanup",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "nodemon": "^2.0.15",
+    "playwright": "^1.59.1",
     "sass": "^1.81.0"
   }
 }

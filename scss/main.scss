@@ -31,5 +31,8 @@ main {
 footer {
   background: transparent;
   color: variables.$theme-ink;
-  padding: 0 1rem 1rem;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: 0;
+  width: 100%;
 }

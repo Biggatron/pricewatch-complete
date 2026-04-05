@@ -9,7 +9,7 @@
   border-radius: 28px;
   box-shadow: 0 20px 50px rgba(57, 41, 26, 0.14), 0 8px 20px rgba(57, 41, 26, 0.08);
   margin: 0.55rem auto 0;
-  max-width: 1240px;
+  max-width: var(--site-shell-max, 1240px);
   padding: 1rem;
   width: 100%;
 }
@@ -186,13 +186,13 @@
 
 .my-tracks-shell {
   margin: 0 auto;
-  max-width: 1180px;
+  max-width: var(--site-shell-max, 1240px);
   width: 100%;
 }
 
 .my-tracks-window {
   margin: 0 auto;
-  width: min(100%, 1040px);
+  width: 100%;
 }
 
 .my-tracks-table a {

@@ -1,11 +1,11 @@
-const STATIC_CACHE_NAME = 'pricewatcher-static-v1';
+const STATIC_CACHE_NAME = 'pricewatcher-static-v8';
 const CORE_ASSETS = [
   '/manifest.webmanifest',
   '/images/favicon.ico',
   '/images/orange-brown-app-icon.png',
-  '/css/main.css?v=20260405-2',
-  '/css/general.css?v=20260405-2',
-  '/css/navbar.css?v=20260405-2',
+  '/css/main.css?v=20260405-9',
+  '/css/general.css?v=20260405-9',
+  '/css/navbar.css?v=20260405-9',
   '/scripts/httpUtil.js',
   '/scripts/generalUtil.js',
   '/scripts/pwa.js'

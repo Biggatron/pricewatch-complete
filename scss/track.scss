@@ -11,7 +11,7 @@
   border-radius: 28px;
   box-shadow: variables.$theme-shadow-lg;
   margin: 0.55rem auto 0;
-  max-width: 1240px;
+  max-width: var(--site-shell-max, 1240px);
   padding: 1rem;
   width: 100%;
 }
@@ -190,13 +190,13 @@
 
 .my-tracks-shell {
   margin: 0 auto;
-  max-width: 1180px;
+  max-width: var(--site-shell-max, 1240px);
   width: 100%;
 }
 
 .my-tracks-window {
   margin: 0 auto;
-  width: min(100%, 1040px);
+  width: 100%;
 }
 
 .my-tracks-table a {

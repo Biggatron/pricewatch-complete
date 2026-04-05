@@ -26,5 +26,8 @@ main {
 footer {
   background: transparent;
   color: #2d241d;
-  padding: 0 1rem 1rem;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: 0;
+  width: 100%;
 }

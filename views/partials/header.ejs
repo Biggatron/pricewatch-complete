@@ -1,42 +1,54 @@
 <nav class="top-nav">
   <% const showAdminLink = typeof isAdmin !== 'undefined' ? isAdmin : false; %>
-  <!-- Collapsible menu for small screens -->
-  <input id="menu-toggle" type="checkbox" />
-  <label class='menu-button-container' for="menu-toggle">
-  <div class='menu-button'></div>
-  </label>
-  <ul class="menu">
-    <li>
-      <a class="navbar-item <%= navItem === 'new-track' ? 'navbar-highlight' : 'nav-link' %>" href="/">New track</a>
-    </li>
-    <li>
-      <a class="navbar-item <%= navItem === 'my-tracks' ? 'navbar-highlight' : 'nav-link' %>" href="/tracklist">My tracks</a>
-    </li>
-    <% if (showAdminLink) { %>
-      <li>
-        <a class="navbar-item <%= navItem === 'admin' ? 'navbar-highlight' : 'nav-link' %>" href="/admin">Admin</a>
-      </li>
-    <% } %>
-  </ul>
+  <% const navLinks = [
+    { key: 'new-track', href: user ? '/' : '/auth/login', label: 'New track' },
+    { key: 'my-tracks', href: '/tracklist', label: 'My tracks' }
+  ]; %>
+  <% if (showAdminLink) { navLinks.push({ key: 'admin', href: '/admin', label: 'Admin' }); } %>
 
-  <!-- Navbar Title -->
-  <div class="navbar-title">
-    <a class="navbar-brand" href="/">
-      <h1>Pricewatcher</h1>
-    </a>
+  <input id="menu-toggle" class="menu-toggle" type="checkbox" />
+
+  <div class="top-nav-primary">
+    <div class="top-nav-start">
+      <label class="menu-button-container" for="menu-toggle" aria-label="Toggle navigation">
+        <span class="menu-button"></span>
+      </label>
+
+      <ul class="menu menu-desktop">
+        <% navLinks.forEach((link) => { %>
+          <li>
+            <a class="navbar-item <%= navItem === link.key ? 'navbar-highlight' : 'nav-link' %>" href="<%= link.href %>"><%= link.label %></a>
+          </li>
+        <% }); %>
+      </ul>
+    </div>
+
+    <div class="navbar-title">
+      <a class="navbar-brand" href="/">
+        <h1>Pricewatcher</h1>
+      </a>
+    </div>
+
+    <ul class="profile-menu">
+      <li>
+        <% if (user) { %>
+          <a class="navbar-account-button btn-icon <%= navItem === 'profile' ? 'navbar-account-button-active' : '' %>" href="/profile" aria-label="Profile"></a>
+        <% } else { %>
+          <a class="navbar-item <%= navItem === 'login' ? 'navbar-highlight' : 'nav-link' %>" href="/auth/login">Login</a>
+        <% } %>
+      </li>
+    </ul>
   </div>
 
-  <!-- Profile/Login -->
-  <ul class="profile-menu">
-    <li>
-      <% if (user) { %>
-        <a class="navbar-account-button btn-icon <%= navItem === 'profile' ? 'navbar-account-button-active' : '' %>" href="/profile" aria-label="Profile"></a>
-        <!-- <a class="navbar-item <%= navItem === 'profile' ? 'navbar-highlight' : 'nav-link' %>" href="/profile">
-          <%= user.name %> 
-      </a> -->
-      <% } else { %>
-      <a class="navbar-item <%= navItem === 'login' ? 'navbar-highlight' : 'nav-link' %>" href="/auth/login">Login</a>
-      <% } %>
-    </li>
-  </ul>
+  <div class="mobile-nav-panel">
+    <div class="mobile-nav-panel-inner">
+      <ul class="menu menu-mobile">
+        <% navLinks.forEach((link) => { %>
+          <li>
+            <a class="navbar-item <%= navItem === link.key ? 'navbar-highlight' : 'nav-link' %>" href="<%= link.href %>"><%= link.label %></a>
+          </li>
+        <% }); %>
+      </ul>
+    </div>
+  </div>
 </nav>

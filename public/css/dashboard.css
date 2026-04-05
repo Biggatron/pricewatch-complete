@@ -136,13 +136,16 @@
 }
 
 .dashboard-table thead th:first-child {
-  width: 46%;
+  width: 44%;
 }
 
 .dashboard-table thead th:nth-child(2),
-.dashboard-table thead th:nth-child(3),
+.dashboard-table thead th:nth-child(3) {
+  width: 17%;
+}
+
 .dashboard-table thead th:nth-child(4) {
-  width: 18%;
+  width: 22%;
 }
 
 .dashboard-table tbody tr {
@@ -190,6 +193,10 @@
   line-height: 1;
   padding: 0.5rem 0.8rem;
   white-space: nowrap;
+}
+
+.dashboard-status-pill {
+  padding-inline: 0.68rem;
 }
 
 .dashboard-price-drop,
@@ -270,13 +277,16 @@
   }
 
   .dashboard-table thead th:first-child {
-    width: 40%;
+    width: 38%;
   }
 
   .dashboard-table thead th:nth-child(2),
-  .dashboard-table thead th:nth-child(3),
+  .dashboard-table thead th:nth-child(3) {
+    width: 18%;
+  }
+
   .dashboard-table thead th:nth-child(4) {
-    width: 20%;
+    width: 24%;
   }
 
   .dashboard-table thead th,

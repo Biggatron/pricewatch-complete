@@ -137,6 +137,7 @@
 }
 
 :root {
+  --site-shell-max: 1240px;
   --theme-cream: #f8f2eb;
   --theme-cream-deep: #f2eeee;
   --theme-surface: #fffdfa;
@@ -178,7 +179,7 @@ a:hover {
 .content {
   align-self: center;
   margin: 1em;
-  max-width: 1200px;
+  max-width: var(--site-shell-max);
 }
 
 .content-container {
@@ -187,8 +188,9 @@ a:hover {
   height: 100%;
   justify-self: center;
   margin: auto;
+  max-width: var(--site-shell-max);
   padding: 2rem 0;
-  width: 60%;
+  width: 100%;
 }
 
 @media (max-width: 800px) {
@@ -253,16 +255,16 @@ a:hover {
 
 .page-shell {
   margin: 0 auto;
-  max-width: 1200px;
+  max-width: var(--site-shell-max);
   width: 100%;
 }
 
 .page-shell-narrow {
-  max-width: 980px;
+  max-width: var(--site-shell-max);
 }
 
 .page-shell-wide {
-  max-width: 1240px;
+  max-width: var(--site-shell-max);
 }
 
 .page-card {
@@ -484,8 +486,8 @@ a.btn:focus-visible {
   justify-content: center;
   margin: 0;
   max-width: none;
-  min-height: 74px;
-  padding: 1rem 1.5rem;
+  min-height: 62px;
+  padding: 0.8rem 1.25rem;
   width: 100%;
 }
 
@@ -586,6 +588,12 @@ a.btn:focus-visible {
   .page-card-split {
     grid-template-columns: 1fr;
   }
+  .login-page .page-stat-grid {
+    display: none;
+  }
+  .signup-page .page-stat-grid {
+    display: none;
+  }
 }
 @media (max-width: 700px) {
   .themed-main {
@@ -611,7 +619,8 @@ a.btn:focus-visible {
     width: 100%;
   }
   .site-footer {
-    min-height: 64px;
+    min-height: 54px;
+    padding: 0.65rem 1rem;
     width: 100%;
   }
 }

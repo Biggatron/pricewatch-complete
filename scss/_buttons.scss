@@ -1,34 +1,57 @@
+@use "sass:color";
 @use "googleButton";
 @use "variables";
 
-// Buttons
-@mixin button-style($bg-color, $font-size: 1rem, $text-color: white, $padding: 0.5rem 0.5rem) {
+@mixin button-style(
+  $bg-color,
+  $font-size: 1rem,
+  $text-color: variables.$theme-ink,
+  $padding: 0.78rem 1.15rem,
+  $border-color: transparent
+) {
+  align-items: center;
   background-color: $bg-color;
+  border: 1px solid $border-color;
+  border-radius: 999px;
+  box-shadow: 0 10px 20px rgba(57, 41, 26, 0.12);
   color: $text-color;
-  border: none;
-  border-radius: 4px;
-  padding: $padding;
-  font-size: $font-size;
   cursor: pointer;
-  transition: background-color 0.3s ease;
-
-  @media (max-width: 700px) {
-
-  }
+  display: inline-flex;
+  font-size: $font-size;
+  font-weight: 700;
+  gap: 0.45rem;
+  justify-content: center;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  padding: $padding;
+  text-decoration: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 
   &:hover {
-    background-color: scale-color($bg-color, $lightness: -10%);
+    background-color: color.scale($bg-color, $lightness: -8%);
+    box-shadow: 0 14px 24px rgba(57, 41, 26, 0.16);
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(0);
   }
 }
 
 .btn {
-  @include button-style(variables.$color-orange-1);
+  @include button-style(variables.$theme-gold);
+}
 
-  @media (max-width: 700px) {
-    @include button-style(variables.$color-orange-1, 1.2rem, white, 0.6rem);
-  }
+.btn-secondary {
+  @include button-style(
+    variables.$theme-dark,
+    1rem,
+    variables.$theme-cream,
+    0.78rem 1.15rem,
+    rgba(255, 255, 255, 0.08)
+  );
 }
 
 .btn-google-blue {
-  @include button-style(variables.$google-blue);
+  @include button-style(variables.$theme-dark, 1rem, variables.$theme-cream, 0.82rem 1.2rem);
 }

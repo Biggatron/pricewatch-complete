@@ -9,31 +9,56 @@
   <%- include('./partials/header', { navItem: 'profile' }); %>
 </header>
 
-<main>
-  <div class="content-container">
-    <div class="space-between-row vertical-align-content">
-      <h1 style="margin: 0.5rem">Welcome to your profile, <%= user.name.split(' ').shift() %></h1>
-      <div><a href="/auth/logout"><button class="btn">Logout</button></a></div>
-    </div>
-    <div class="profile-section">
-      <!-- Email Update Section -->
-      <div class="email-update-box">
-        <h3>Have price changes sent to your email</h3>
-        <form id="update-email-form">
-          <label for="email">Email Address:</label>
-          <input 
-            type="email" 
-            id="email" 
-            name="email" 
-            value="<%= user.email %>" 
-            placeholder="Enter your email" 
-            required>
-          <button type="submit" class="btn">Update Email</button>
+<main class="themed-main">
+  <section class="page-shell page-shell-narrow">
+    <div class="page-card page-card-split">
+      <div class="page-copy">
+        <p class="page-kicker">Your account</p>
+        <h1 class="page-title">Hello, <%= user.name.split(' ').shift() %></h1>
+        <p class="page-intro">
+          Manage where your price alerts arrive and keep your account details ready for the next drop.
+        </p>
+
+        <div class="page-stat-grid">
+          <article class="page-stat-card">
+            <span class="page-stat-label">Current email</span>
+            <strong class="page-stat-value"><%= user.email %></strong>
+          </article>
+          <article class="page-stat-card">
+            <span class="page-stat-label">Notifications</span>
+            <strong class="page-stat-value">Price change emails are enabled</strong>
+          </article>
+        </div>
+
+        <div class="theme-actions">
+          <a href="/auth/logout" class="btn-secondary">Logout</a>
+        </div>
+      </div>
+
+      <div class="page-card-panel">
+        <h2 class="page-section-title">Notification email</h2>
+        <p class="page-note">Use the address below to receive price change alerts and account updates.</p>
+
+        <form class="theme-form" id="update-email-form">
+          <label class="theme-field" for="email">
+            <span class="theme-label">Email address</span>
+            <input
+              class="theme-input"
+              type="email"
+              id="email"
+              name="email"
+              value="<%= user.email %>"
+              placeholder="Enter your email"
+              required>
+          </label>
+
+          <button type="submit" class="btn">Update email</button>
         </form>
-        <p id="email-update-status" class="status-message"></p>
+
+        <p id="email-update-status" class="theme-status display-none"></p>
       </div>
     </div>
-  </div>
+  </section>
 </main>
 
 <footer>
@@ -41,13 +66,20 @@
 </footer>
 
 <script>
-  // Client-side handler for email update
+  const emailUpdateStatusEl = document.getElementById('email-update-status');
+
+  function setEmailUpdateStatus(message, type = 'success') {
+    emailUpdateStatusEl.textContent = message || '';
+    emailUpdateStatusEl.classList.toggle('display-none', !message);
+    emailUpdateStatusEl.classList.toggle('theme-status-success', Boolean(message) && type === 'success');
+    emailUpdateStatusEl.classList.toggle('theme-status-error', Boolean(message) && type === 'error');
+  }
+
   document.getElementById('update-email-form').addEventListener('submit', async (event) => {
     event.preventDefault();
 
     const email = document.getElementById('email').value;
-    const statusMessage = document.getElementById('email-update-status');
-    statusMessage.textContent = '';
+    setEmailUpdateStatus('');
 
     try {
       const response = await fetch('/profile/update-user-email', {
@@ -59,42 +91,17 @@
       });
 
       if (response.ok) {
-        statusMessage.textContent = 'Email updated successfully!';
-        statusMessage.style.color = 'green';
+        setEmailUpdateStatus('Email updated successfully!', 'success');
       } else {
         const errorData = await response.json();
-        statusMessage.textContent = errorData.message || 'Failed to update email.';
-        statusMessage.style.color = 'red';
+        setEmailUpdateStatus(errorData.message || 'Failed to update email.', 'error');
       }
     } catch (error) {
       console.error('Error updating email:', error);
-      statusMessage.textContent = 'An error occurred while updating the email.';
-      statusMessage.style.color = 'red';
+      setEmailUpdateStatus('An error occurred while updating the email.', 'error');
     }
   });
 </script>
-
-<style>
-  .email-update-box {
-    max-width: 400px;
-    margin-top: 20px;
-    padding: 20px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    background-color: #f9f9f9;
-  }
-  .email-update-box input {
-    width: calc(100% - 20px);
-    margin-bottom: 10px;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-  }
-  .status-message {
-    margin-top: 10px;
-    font-size: 0.9rem;
-  }
-</style>
 
 </body>
 </html>

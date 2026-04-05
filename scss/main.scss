@@ -1,27 +1,35 @@
 @use "variables";
 
 @font-face {
-  font-family: 'Roboto';
-  src: url('../fonts/Roboto-Regular.ttf');
+  font-family: "Roboto";
+  src: url("../fonts/Roboto-Regular.ttf");
 }
 
-html, body {
+html,
+body {
+  background:
+    radial-gradient(circle at top right, rgba(255, 183, 88, 0.28), transparent 26rem),
+    linear-gradient(180deg, variables.$theme-cream 0%, variables.$theme-cream-deep 50%, #ebe7e4 100%);
+  color: variables.$theme-ink;
+  display: flex;
+  flex-direction: column;
   font-family: Roboto, Verdana, sans-serif;
   height: 100%;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  background-color: variables.$color-gray-1;
+}
+
+body {
+  min-height: 100vh;
 }
 
 main {
-  flex: 1;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  flex: auto;
 }
 
 footer {
-  background-color: variables.$color-orange-1;
-  color: white;
+  background: transparent;
+  color: variables.$theme-ink;
+  padding: 0 1rem 1rem;
 }

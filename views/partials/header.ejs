@@ -21,14 +21,16 @@
 
   <!-- Navbar Title -->
   <div class="navbar-title">
-    <h1>Pricewatcher</h1>
+    <a class="navbar-brand" href="/">
+      <h1>Pricewatcher</h1>
+    </a>
   </div>
 
   <!-- Profile/Login -->
   <ul class="profile-menu">
     <li>
       <% if (user) { %>
-        <a class="navbar-account-button btn-icon" href="/profile"></a>
+        <a class="navbar-account-button btn-icon <%= navItem === 'profile' ? 'navbar-account-button-active' : '' %>" href="/profile" aria-label="Profile"></a>
         <!-- <a class="navbar-item <%= navItem === 'profile' ? 'navbar-highlight' : 'nav-link' %>" href="/profile">
           <%= user.name %> 
       </a> -->

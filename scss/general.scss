@@ -1,15 +1,39 @@
 @use "variables";
 @use "buttons";
 
+:root {
+  --theme-cream: #{variables.$theme-cream};
+  --theme-cream-deep: #{variables.$theme-cream-deep};
+  --theme-surface: #{variables.$theme-surface};
+  --theme-surface-soft: #{variables.$theme-surface-soft};
+  --theme-ink: #{variables.$theme-ink};
+  --theme-ink-soft: #{variables.$theme-ink-soft};
+  --theme-label: #{variables.$theme-label};
+  --theme-dark: #{variables.$theme-dark};
+  --theme-gold: #{variables.$theme-gold};
+  --theme-success: #{variables.$theme-success};
+  --theme-danger: #{variables.$theme-danger};
+}
 
-/* Core css, HTML, Body*/
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: variables.$theme-link;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: variables.$theme-link-hover;
+}
 
 .input-text {
-  margin-top: auto;
-  margin-bottom: auto;
-  height: 30px;
-  vertical-align: middle;
   font-size: 16px;
+  height: 30px;
+  margin-bottom: auto;
+  margin-top: auto;
+  vertical-align: middle;
 }
 
 .full-width {
@@ -17,50 +41,51 @@
 }
 
 .content {
-  max-width: 1200px;
-  margin: 1em;
   align-self: center;
+  margin: 1em;
+  max-width: 1200px;
 }
 
 .content-container {
   background-color: variables.$color-gray-1;
-  padding: 2rem 0;
   border-radius: 0.3rem;
   height: 100%;
   justify-self: center;
   margin: auto;
+  padding: 2rem 0;
   width: 60%;
 }
+
 @media (max-width: 800px) {
   .content-container {
-    width: 95%; /* Expand to 100% for smaller screens */
+    width: 95%;
   }
 }
 
 .center-row-container {
   display: flex;
-  justify-content: center;
   flex-direction: row;
+  justify-content: center;
 }
 
 .space-between-row {
-display: flex;
-justify-content: space-between;
-flex-direction: row;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
 }
 
 .center-col-container {
-  display: flex;
-  justify-content: center;
   align-items: center;
+  display: flex;
   flex-direction: column;
+  justify-content: center;
 }
 
 .center-self {
-  display: flex;
   align-self: center;
-  justify-self: center;
+  display: flex;
   flex-direction: column;
+  justify-self: center;
 }
 
 .container {
@@ -73,86 +98,403 @@ flex-direction: row;
 }
 
 .vertical-align-content {
-  display: flex;
   align-items: center;
+  display: flex;
 }
 
 .vertical-shrink-center-container {
   display: flex;
   flex-direction: row;
-  margin-top: auto;
   margin-bottom: auto;
+  margin-top: auto;
 }
 
 .display-none {
   display: none !important;
 }
 
-/* The snackbar - position it at the bottom and in the middle of the screen */
-.snackbar {
-  visibility: hidden; /* Hidden by default. Visible on click */
-  min-width: 250px; /* Set a default minimum width */
-  margin-left: -125px; /* Divide value of min-width by 2 */
-  background-color: variables.$color-orange-1;
-  color: #fff; /* White text color */
-  text-align: center; /* Centered text */
-  border-radius: 5px; /* Rounded borders */
-  padding: 16px; /* Padding */
-  position: fixed; /* Sit on top of the screen */
-  z-index: 1; /* Add a z-index if needed */
-  left: 50%; /* Center the snackbar */
-  bottom: 40px; /* 40px from the bottom */
+.themed-main {
+  padding: 2rem 1rem 3rem;
 }
 
-/* Show the snackbar when clicking on a button (class added with JavaScript) */
+.page-shell {
+  margin: 0 auto;
+  max-width: 1200px;
+  width: 100%;
+}
+
+.page-shell-narrow {
+  max-width: 980px;
+}
+
+.page-shell-wide {
+  max-width: 1240px;
+}
+
+.page-card {
+  background: linear-gradient(180deg, variables.$theme-surface 0%, variables.$theme-surface-soft 100%);
+  border: 1px solid variables.$theme-border;
+  border-radius: 28px;
+  box-shadow: variables.$theme-shadow-lg;
+  padding: clamp(1.3rem, 2vw, 2rem);
+}
+
+.page-card-split {
+  align-items: start;
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.page-card-panel {
+  background: variables.$theme-surface-card;
+  border: 1px solid rgba(72, 54, 39, 0.08);
+  border-radius: 22px;
+  box-shadow: variables.$theme-shadow-sm;
+  padding: 1.35rem;
+}
+
+.page-copy {
+  max-width: 56ch;
+}
+
+.page-kicker {
+  color: variables.$theme-label;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  margin: 0 0 0.55rem;
+  text-transform: uppercase;
+}
+
+.page-title {
+  color: variables.$theme-ink;
+  font-size: clamp(2rem, 5vw, 3.35rem);
+  line-height: 1.02;
+  margin: 0;
+}
+
+.page-section-title {
+  color: variables.$theme-ink;
+  font-size: 1.35rem;
+  margin: 0 0 0.35rem;
+}
+
+.page-intro,
+.page-note {
+  color: variables.$theme-ink-soft;
+  font-size: 1rem;
+  line-height: 1.7;
+  margin: 0.95rem 0 0;
+}
+
+.page-note {
+  font-size: 0.94rem;
+}
+
+.page-stat-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  margin-top: 1.5rem;
+}
+
+.page-stat-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(72, 54, 39, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 12px 26px rgba(57, 41, 26, 0.06);
+  padding: 1rem;
+}
+
+.page-stat-label {
+  color: variables.$theme-label;
+  display: block;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+}
+
+.page-stat-value {
+  color: variables.$theme-ink;
+  display: block;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.theme-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.theme-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.theme-label {
+  color: variables.$theme-ink;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.theme-input {
+  background: variables.$theme-white;
+  border: 1px solid rgba(72, 54, 39, 0.14);
+  border-radius: 14px;
+  color: variables.$theme-ink;
+  font-size: 1rem;
+  min-height: 52px;
+  outline: none;
+  padding: 0.85rem 1rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.theme-input::placeholder {
+  color: #9d8b7c;
+}
+
+.theme-input:focus,
+.theme-input:focus-visible,
+button:focus,
+button:focus-visible,
+a.btn:focus,
+a.btn:focus-visible {
+  border-color: variables.$theme-gold;
+  box-shadow: 0 0 0 3px rgba(255, 183, 88, 0.2);
+  outline: none;
+}
+
+.theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.theme-links {
+  color: variables.$theme-ink-soft;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-top: 1rem;
+}
+
+.theme-links p {
+  margin: 0.45rem 0 0;
+}
+
+.text-link {
+  color: variables.$theme-link;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  color: variables.$theme-link-hover;
+}
+
+.auth-or {
+  align-items: center;
+  color: variables.$theme-label;
+  display: flex;
+  font-size: 0.82rem;
+  font-weight: 700;
+  gap: 0.8rem;
+  letter-spacing: 0.08em;
+  margin: 1rem 0;
+  text-transform: uppercase;
+}
+
+.auth-or::before,
+.auth-or::after {
+  background: rgba(72, 54, 39, 0.14);
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+}
+
+.theme-status {
+  border-radius: 16px;
+  font-size: 0.94rem;
+  line-height: 1.55;
+  margin: 0;
+  padding: 0.8rem 0.9rem;
+}
+
+.theme-status:empty {
+  display: none;
+}
+
+.theme-status-success {
+  background: variables.$theme-success-soft;
+  color: variables.$theme-success;
+}
+
+.theme-status-error {
+  background: variables.$theme-danger-soft;
+  color: variables.$theme-danger;
+}
+
+.site-footer {
+  align-items: center;
+  background: variables.$theme-dark;
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 18px 40px rgba(38, 28, 18, 0.2);
+  color: variables.$theme-cream-deep;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  max-width: none;
+  min-height: 74px;
+  padding: 1rem 1.5rem;
+  width: 100%;
+}
+
+.footer-copy {
+  color: variables.$theme-cream-deep;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 0;
+  text-align: center;
+}
+
+.snackbar {
+  background-color: variables.$theme-gold;
+  border-radius: 16px;
+  bottom: 40px;
+  color: variables.$theme-ink;
+  left: 50%;
+  margin-left: -125px;
+  min-width: 250px;
+  padding: 16px;
+  position: fixed;
+  text-align: center;
+  visibility: hidden;
+  z-index: 1;
+}
+
 .snackbar-show {
-  visibility: visible; /* Show the snackbar */
-  /* Add animation: Take 0.5 seconds to fade in and out the snackbar.
-  However, delay the fade out process for 2.5 seconds */
   -webkit-animation: fadein 0.5s, fadeout 0.5s 2.5s;
   animation: fadein 0.5s, fadeout 0.5s 2.5s;
+  visibility: visible;
 }
 
-/* Animations to fade the snackbar in and out */
 @-webkit-keyframes fadein {
-  from {bottom: 0; opacity: 0;}
-  to {bottom: 40px; opacity: 1;}
+  from {
+    bottom: 0;
+    opacity: 0;
+  }
+
+  to {
+    bottom: 40px;
+    opacity: 1;
+  }
 }
 
 @keyframes fadein {
-  from {bottom: 0; opacity: 0;}
-  to {bottom: 40px; opacity: 1;}
+  from {
+    bottom: 0;
+    opacity: 0;
+  }
+
+  to {
+    bottom: 40px;
+    opacity: 1;
+  }
 }
 
 @-webkit-keyframes fadeout {
-  from {bottom: 40px; opacity: 1;}
-  to {bottom: 0; opacity: 0;}
+  from {
+    bottom: 40px;
+    opacity: 1;
+  }
+
+  to {
+    bottom: 0;
+    opacity: 0;
+  }
 }
 
 @keyframes fadeout {
-  from {bottom: 40px; opacity: 1;}
-  to {bottom: 0; opacity: 0;}
+  from {
+    bottom: 40px;
+    opacity: 1;
+  }
+
+  to {
+    bottom: 0;
+    opacity: 0;
+  }
 }
 
-/* Spinning loader */
 .loader {
-  border: 0.5em solid variables.$color-gray-2;
-  border-top: 0.5em solid variables.$color-orange-1;
-  border-radius: 50%;
-  width: 2em;
-  height: 2em;
   animation: spin 1s linear infinite;
-  position: absolute; /* Sit on top of the screen */
-  z-index: 1; /* Add a z-index if needed */
-  
-  left: 0; 
-  right: 0; 
-  top: 0;
+  border: 0.5em solid variables.$color-gray-2;
+  border-radius: 50%;
+  border-top: 0.5em solid variables.$theme-gold;
   bottom: 0;
+  height: 2em;
+  left: 0;
   margin: auto;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 2em;
+  z-index: 200;
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .page-card-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .themed-main {
+    padding: 1.2rem 0.85rem 2.2rem;
+  }
+
+  .page-card {
+    border-radius: 24px;
+    padding: 1.1rem;
+  }
+
+  .page-card-panel {
+    border-radius: 20px;
+    padding: 1.05rem;
+  }
+
+  .page-title {
+    font-size: 2rem;
+  }
+
+  .theme-actions {
+    flex-direction: column;
+  }
+
+  .theme-actions .btn,
+  .theme-actions .btn-secondary,
+  .theme-actions .btn-google-blue {
+    width: 100%;
+  }
+
+  .site-footer {
+    min-height: 64px;
+    width: 100%;
+  }
 }

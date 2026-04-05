@@ -8,42 +8,71 @@
 <header>
   <%- include('./partials/header', {navItem: 'login'}); %>
 </header>
-  
-<main>
-  <div class="content-container">
-    <div class="center-col-container">
-      <div class="center-col-container">
-        <div class="google-btn">
-          <div class="google-icon-wrapper">
-            <img class="google-icon" src="/images/google_logo.svg"/>
-          </div>
-          <p class="btn-text"><a href="/auth/google">Sign up with google</a></p>
-        </div>
-        <p>or</p>
-        <div class="signup-input-container">
-          <div>
-            <input class="input-text" id="email" type="email" autocomplete="email" placeholder="Email">
-          </div>
-          <div>
-            <input class="input-text" id="name" type="text" autocomplete="Name" placeholder="Name">
-          </div>
-          <div>
-            <input class="input-text" id="new-password" type="password" autocomplete="new-password" placeholder="Password">
-          </div>
-          <div>
-            <input class="input-text" id="new-password-repeated" type="password" autocomplete="new-password" placeholder="Repeate password">
-          </div>
-        </div>
-        <p id="password-error" style="color:red"></p>
-        <div class="center-self">
-          <button class="btn-google-blue" onClick="signUp()">Sign up</button>
-        </div>
-        <p>
-          <a href="/auth/login">Already have an account?</a>
+
+<main class="themed-main">
+  <section class="page-shell page-shell-narrow">
+    <div class="page-card page-card-split">
+      <div class="page-copy">
+        <p class="page-kicker">Join pricewatcher</p>
+        <h1 class="page-title">Create your account</h1>
+        <p class="page-intro">
+          Start a watchlist, get notified when prices move, and keep your next purchase decision simple.
         </p>
+
+        <div class="page-stat-grid">
+          <article class="page-stat-card">
+            <span class="page-stat-label">Track smarter</span>
+            <strong class="page-stat-value">Monitor products instead of refreshing stores by hand</strong>
+          </article>
+          <article class="page-stat-card">
+            <span class="page-stat-label">Stay ready</span>
+            <strong class="page-stat-value">Know when it is time to buy, wait, or keep watching</strong>
+          </article>
+        </div>
+      </div>
+
+      <div class="page-card-panel">
+        <a class="google-btn" href="/auth/google">
+          <span class="google-icon-wrapper">
+            <img class="google-icon" src="/images/google_logo.svg" alt="">
+          </span>
+          <span class="btn-text">Continue with Google</span>
+        </a>
+
+        <div class="auth-or">or create with email</div>
+
+        <div class="theme-form">
+          <label class="theme-field" for="email">
+            <span class="theme-label">Email</span>
+            <input class="theme-input" id="email" type="email" autocomplete="email" placeholder="you@example.com">
+          </label>
+
+          <label class="theme-field" for="name">
+            <span class="theme-label">Name</span>
+            <input class="theme-input" id="name" type="text" autocomplete="name" placeholder="Your name">
+          </label>
+
+          <label class="theme-field" for="new-password">
+            <span class="theme-label">Password</span>
+            <input class="theme-input" id="new-password" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+          </label>
+
+          <label class="theme-field" for="new-password-repeated">
+            <span class="theme-label">Repeat password</span>
+            <input class="theme-input" id="new-password-repeated" type="password" autocomplete="new-password" placeholder="Repeat your password">
+          </label>
+
+          <p id="password-error" class="theme-status display-none"></p>
+
+          <button class="btn-google-blue" type="button" onClick="signUp()">Create account</button>
+        </div>
+
+        <div class="theme-links">
+          <p>Already have an account? <a class="text-link" href="/auth/login">Log in here</a></p>
+        </div>
       </div>
     </div>
-  </div>
+  </section>
 </main>
 
 <footer>
@@ -54,7 +83,7 @@
 </html>
 
 <script>
-  let loaderEl = document.getElementById("loader");
+  let loaderEl = document.getElementById('loader');
 
   function showLoader() {
     loaderEl.classList.remove('display-none');
@@ -73,20 +102,27 @@
     submitAction();
   }
 
+  function setSignupStatus(message, type = 'error') {
+    const passwordErrorEl = document.getElementById('password-error');
+    passwordErrorEl.innerText = message || '';
+    passwordErrorEl.classList.toggle('display-none', !message);
+    passwordErrorEl.classList.toggle('theme-status-error', Boolean(message) && type === 'error');
+    passwordErrorEl.classList.toggle('theme-status-success', Boolean(message) && type === 'success');
+  }
+
   function signUp() {
     let email = document.getElementById('email').value;
     let name = document.getElementById('name').value;
     let password = document.getElementById('new-password').value;
     let passwordRepeated = document.getElementById('new-password-repeated').value;
-    let passwordErrorEl = document.getElementById('password-error');
-    
-    passwordErrorEl.innerText = "";
+
+    setSignupStatus('');
 
     if (password !== passwordRepeated) {
-      passwordErrorEl.innerHTML = "Passwords do not match";
+      setSignupStatus('Passwords do not match', 'error');
       return;
     } else if (password.length < 8) {
-      passwordErrorEl.innerHTML = "Password must be at least 8 characters long";
+      setSignupStatus('Password must be at least 8 characters long', 'error');
       return;
     }
 
@@ -105,13 +141,11 @@
       }
 
       if (returnData && returnData.message) {
-        passwordErrorEl.style.color = 'green';
-        passwordErrorEl.innerText = returnData.message;
+        setSignupStatus(returnData.message, 'success');
       }
     }).catch(error => {
       hideLoader();
-      passwordErrorEl.style.color = 'red';
-      passwordErrorEl.innerText = error;
+      setSignupStatus(error, 'error');
     });
   }
 

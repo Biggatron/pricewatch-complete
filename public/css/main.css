@@ -2,23 +2,29 @@
   font-family: "Roboto";
   src: url("../fonts/Roboto-Regular.ttf");
 }
-html, body {
+html,
+body {
+  background: radial-gradient(circle at top right, rgba(255, 183, 88, 0.28), transparent 26rem), linear-gradient(180deg, #f8f2eb 0%, #f2eeee 50%, #ebe7e4 100%);
+  color: #2d241d;
+  display: flex;
+  flex-direction: column;
   font-family: Roboto, Verdana, sans-serif;
   height: 100%;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  background-color: #f2eeee;
+}
+
+body {
+  min-height: 100vh;
 }
 
 main {
-  flex: 1;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  flex: auto;
 }
 
 footer {
-  background-color: #ffb758;
-  color: white;
+  background: transparent;
+  color: #2d241d;
+  padding: 0 1rem 1rem;
 }

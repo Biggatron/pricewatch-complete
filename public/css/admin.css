@@ -319,22 +319,66 @@
   line-height: 1.25;
 }
 
+.admin-track-wrapper {
+  background: #ffffff;
+  border: 1px solid rgba(72, 54, 39, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 10px 24px rgba(72, 54, 39, 0.06);
+  overflow-x: auto;
+  padding: 0;
+}
+
+.admin-track-wrapper table {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-top: 0;
+  width: 100%;
+}
+
+.admin-track-table th {
+  background-color: #2d241d;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
+  color: #f8f4ef;
+  padding: 0.8rem 0.75rem;
+}
+
+.admin-track-table th:not(:last-child),
+.admin-track-table td:not(:last-child) {
+  border-right: 1px solid rgba(95, 75, 56, 0.1);
+}
+
+.admin-track-table td {
+  background: #ffffff;
+  border-bottom: 1px solid rgba(95, 75, 56, 0.08);
+  border-top: none;
+  padding: 0.72rem 0.75rem;
+}
+
+.admin-track-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .admin-track-summary-row {
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
-.admin-track-summary-row:hover {
-  background-color: #ececec;
+.admin-track-summary-row:hover td {
+  background-color: #fcf8f3;
 }
 
 .admin-track-summary-row-deleted {
   opacity: 0.8;
 }
 
-.admin-track-summary-row:focus {
+.admin-track-summary-row:focus td {
   outline: none;
-  background-color: #ececec;
+  background-color: #fcf8f3;
+}
+
+.admin-track-summary-row-expanded td {
+  background-color: #faf4ee;
 }
 
 .admin-track-name {
@@ -342,7 +386,8 @@
 }
 
 .admin-track-detail-row td {
-  background-color: #f4f4f4;
+  background-color: #f8f1e8;
+  border-top: 1px solid rgba(95, 75, 56, 0.08);
   padding: 0;
 }
 

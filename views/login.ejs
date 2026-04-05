@@ -8,31 +8,64 @@
 <header>
   <%- include('./partials/header', {navItem: 'login'}); %>
 </header>
-  
-<main>
-  <div class="content-container">
-    <div class="center-col-container">
-      <div class="google-btn">
-        <div class="google-icon-wrapper">
-          <img class="google-icon" src="/images/google_logo.svg"/>
+
+<main class="themed-main">
+  <section class="page-shell page-shell-narrow">
+    <div class="page-card page-card-split">
+      <div class="page-copy">
+        <p class="page-kicker">Welcome back</p>
+        <h1 class="page-title">Log in to your watchlist</h1>
+        <p class="page-intro">
+          Review recent price movement, open your tracked products, and stay on top of the deals worth waiting for.
+        </p>
+
+        <div class="page-stat-grid">
+          <article class="page-stat-card">
+            <span class="page-stat-label">One dashboard</span>
+            <strong class="page-stat-value">See everything you are tracking in one place</strong>
+          </article>
+          <article class="page-stat-card">
+            <span class="page-stat-label">Fast updates</span>
+            <strong class="page-stat-value">Catch drops, steady prices, and increases at a glance</strong>
+          </article>
         </div>
-        <p class="btn-text"><a href="/auth/google">Sign in with google</a></p>
       </div>
-      <p>or</p>
-      <div class="center-col-container">
-        <div class="center-row-container">
-          <input class="input-text" id="email" type="text" autocomplete="email" placeholder="Email">
+
+      <div class="page-card-panel">
+        <a class="google-btn" href="/auth/google">
+          <span class="google-icon-wrapper">
+            <img class="google-icon" src="/images/google_logo.svg" alt="">
+          </span>
+          <span class="btn-text">Continue with Google</span>
+        </a>
+
+        <div class="auth-or">or use email</div>
+
+        <div class="theme-form">
+          <label class="theme-field" for="email">
+            <span class="theme-label">Email</span>
+            <input class="theme-input" id="email" type="email" autocomplete="email" placeholder="you@example.com">
+          </label>
+
+          <label class="theme-field" for="password">
+            <span class="theme-label">Password</span>
+            <input class="theme-input" id="password" type="password" autocomplete="current-password" placeholder="Enter your password">
+          </label>
+
+          <p
+            id="login-status"
+            class="theme-status <%= message ? (messageType === 'error' ? 'theme-status-error' : 'theme-status-success') : 'display-none' %>"><%= message || '' %></p>
+
+          <button class="btn-google-blue" type="button" onClick="login()">Log in</button>
         </div>
-        <div class="center-row-container">
-          <input class="input-text" id="password" type="password" autocomplete="password" placeholder="Password">
+
+        <div class="theme-links">
+          <a class="text-link" href="/auth/forgot-password">Forgot your password?</a>
+          <p>Don't have an account yet? <a class="text-link" href="/auth/signup">Create an account</a></p>
         </div>
-        <p id="login-status" style="color: <%= messageType === 'error' ? 'red' : 'green' %>;"><%= message || '' %></p>
-        <button class="btn-google-blue" onClick="login()">Login</button>
-        <p><a href="/auth/forgot-password">Forgot your password?</a></p>
       </div>
-      Don't have an account yet?<a href="/auth/signup">Click here to signup!</a>
     </div>
-  </div>
+  </section>
 </main>
 
 <footer>
@@ -42,7 +75,6 @@
 </body>
 </html>
 <script>
-  
   let loaderEl = document.getElementById("loader");
   let loginStatusEl = document.getElementById("login-status");
 
@@ -52,6 +84,13 @@
 
   function hideLoader() {
     loaderEl.classList.add('display-none');
+  }
+
+  function setLoginStatus(message, type = 'error') {
+    loginStatusEl.innerText = message || '';
+    loginStatusEl.classList.toggle('display-none', !message);
+    loginStatusEl.classList.toggle('theme-status-error', Boolean(message) && type === 'error');
+    loginStatusEl.classList.toggle('theme-status-success', Boolean(message) && type === 'success');
   }
 
   function submitOnEnter(event, submitAction) {
@@ -66,9 +105,8 @@
   function login() {
     let email = document.getElementById('email').value;
     let password = document.getElementById('password').value;
-    loginStatusEl.style.color = 'red';
-    loginStatusEl.innerText = "";
-    
+    setLoginStatus('');
+
     let user = {
       email: email,
       password: password
@@ -82,7 +120,7 @@
       }
     }).catch(error => {
       hideLoader();
-      loginStatusEl.innerText = error;
+      setLoginStatus(error, 'error');
     });
   }
 

@@ -1,8 +1,8 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <%- include('partials/head'); %>
-  <link rel="stylesheet" href="/css/track.css?v=20260405-1" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260405-2" type="text/css">
 </head>
 <body class="body-container">
 
@@ -10,31 +10,49 @@
   <%- include('partials/header', {navItem: 'new-track'}); %>
 </header>
 
-<main>
-  <div class="container">
-    <% if (!user) { %>
-    <div class="form-group">
-      <label for="email">Email:</label>
-      <input type="email" id="email" name="contact_email" value="" placeholder="example@example.com" autocomplete="section-new-track email" autocapitalize="off" spellcheck="false">
+<main class="themed-main new-track-main">
+  <section class="page-shell page-shell-wide">
+    <div class="page-card-panel track-builder-form-panel">
+      <div class="track-builder-form">
+        <% if (!user) { %>
+          <label class="theme-field" for="email">
+            <span class="theme-label">Email</span>
+            <input class="theme-input" type="email" id="email" name="contact_email" value="" placeholder="example@example.com" autocomplete="section-new-track email" autocapitalize="off" spellcheck="false">
+          </label>
+        <% }; %>
+
+        <label class="theme-field" for="url">
+          <span class="theme-label">Product URL</span>
+          <input class="theme-input" type="url" name="track_url" id="url" value="" placeholder="https://example.com/product" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+
+        <label class="theme-field" for="price">
+          <span class="theme-label track-price-label">
+            <span>Product price</span>
+            <span class="track-help-wrap">
+              <button
+                class="track-help-trigger"
+                type="button"
+                aria-label="What is product price?"
+                aria-describedby="price-help-tooltip">?</button>
+              <span class="track-help-tooltip" id="price-help-tooltip" role="tooltip">Current product price to help the system locate the correct price to track</span>
+            </span>
+          </span>
+          <input class="theme-input" type="text" name="target_price" id="price" placeholder="e.g. 2999" autocomplete="off" inputmode="decimal">
+        </label>
+
+        <button class="btn track-submit-btn" id="track-price-button" type="button" onClick="trackPrice()">Track</button>
+      </div>
     </div>
-    <% }; %>
-    <div class="form-group">
-      <label for="url">URL:</label>
-      <input type="url" name="track_url" id="url" value="" placeholder="https://example.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+    <div id="previewContainer" class="preview-container display-none">
+      <p id="previewStatus" class="preview-status">Enter a URL to load a preview.</p>
+      <iframe id="productIframe" class="display-none" title="Price Selection" width="100%" height="auto" src=""></iframe>
+      <a id="productPreviewImageLink" class="preview-image-link display-none" href="" target="_blank" rel="noreferrer">
+        <img id="productPreviewImage" class="preview-image" alt="Product preview screenshot">
+      </a>
     </div>
-    <div class="form-group">
-      <label for="price">Price:</label>
-      <input type="text" name="target_price" id="price" placeholder="e.g. 2999" autocomplete="off" inputmode="decimal">
-    </div>
-    <button class="btn" id="track-price-button" type="button" onClick="trackPrice()">Track Price</button>
-  </div>
-  <div id="previewContainer" class="preview-container display-none">
-    <p id="previewStatus" class="preview-status">Enter a URL to load a preview.</p>
-    <iframe id="productIframe" class="display-none" title="Price Selection" width="100%" height="auto" src=""></iframe>
-    <a id="productPreviewImageLink" class="preview-image-link display-none" href="" target="_blank" rel="noreferrer">
-      <img id="productPreviewImage" class="preview-image" alt="Product preview screenshot">
-    </a>
-  </div>
+  </section>
 </main>
 
 <div class="track-result-modal display-none" id="track-result-modal">
@@ -51,32 +69,6 @@
     </div>
   </div>
 </div>
-
-
-<!--
-<main>
-    <div class="content">
-      <% if (!user) { %>
-      <div>
-        <label for="email">Enter your email:</label>
-        <input type="email" id="email" name="email" value="birgir.snorrason@gmail.com">
-      </div>
-      <% }; %>
-      <div>
-        <label for="url">Paste URL:</label>
-        <input type="url" name="url" id="url" value="https://elko.is/vorur/electrolux-emz725mmk-orbylgjuofn-311552/EMZ725MMK" placeholder="https://example.com"size="60">
-      </div>
-      <div>
-        <label for="price">Enter price to be tracked:</label>
-        <input type="text" name="price" id="price" placeholder="2.999,00" value="37.995">
-      </div>
-      <div>
-        <button onClick="trackPrice()">Track price</button>
-      </div>
-    </div>
-    <iframe id="productIframe" title="Price Selection" width="100%" height="auto" src=""></iframe>
-</main> 
--->
 
 <footer>
   <%- include('partials/footer'); %>
@@ -111,13 +103,7 @@
   if (user) {
     user = JSON.parse(user);
   }
-  
-  //import fetch from 'node-fetch';
-  console.log('Coockie incomming!')
-  console.log(document.cookie);
 
-
-  /* Event listener */
   urlInputEl.addEventListener('input', queuePreviewLoad);
   priceInputEl.addEventListener('input', () => {
     if (priceInputEl.value !== lastAutofilledPrice) {
@@ -125,7 +111,6 @@
     }
   });
 
-  /* Function */
   function queuePreviewLoad() {
     const url = this.value.trim();
 
@@ -144,7 +129,7 @@
       loadPreview(url);
     }, 250);
   }
-  
+
   function showLoader() {
     loaderEl.classList.remove('display-none');
   }
@@ -172,7 +157,6 @@
       url: document.getElementById('url').value,
       price: document.getElementById('price').value
     }
-    console.log(track);
     postTrack(track);
   }
 
@@ -207,7 +191,7 @@
   function setTrackSubmissionState(isSubmitting) {
     isSubmittingTrack = isSubmitting;
     trackPriceButtonEl.disabled = isSubmitting;
-    trackPriceButtonEl.innerText = isSubmitting ? 'Tracking...' : 'Track Price';
+    trackPriceButtonEl.innerText = isSubmitting ? 'Tracking...' : 'Track price';
   }
 
   async function postTrack(track) {
@@ -216,11 +200,9 @@
     }
 
     setTrackSubmissionState(true);
-    console.log('About to fetch')
     showLoader();
     try {
       let response = await fetch("/track",{
-        // method changes
         method: 'POST',
         body: JSON.stringify(track),
         headers: {
@@ -229,7 +211,7 @@
       });
       hideLoader();
       const responseBody = await response.json().catch(() => null);
-      if (response.status === 201) {  
+      if (response.status === 201) {
         showTrackResultModal(
           responseBody && responseBody.message ? responseBody.message : 'Track added successfully',
           { isSuccess: true, showActions: true }
@@ -248,7 +230,6 @@
           responseBody && responseBody.error ? responseBody.error : 'Invalid track input'
         );
       } else if (response.status === 401) {
-        console.log('status 401')
         window.location.href = "/pages/login";
       } else if (response.status === 206) {
         showTrackResultModal(

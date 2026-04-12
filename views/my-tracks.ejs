@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head'); %>
   <link rel="stylesheet" href="/css/dashboard.css?v=20260405-3" type="text/css">
-  <link rel="stylesheet" href="/css/track.css?v=20260405-3" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260411-1" type="text/css">
 </head>
 <body class="body-container">
 
@@ -151,7 +151,16 @@
                             <strong>Original link:</strong>
                             <a href="<%= track.price_url %>" target="_blank" rel="noreferrer"><%= track.price_url %></a>
                           </span>
-                          <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
+                          <span class="track-detail-actions">
+                            <% if (!track.active) { %>
+                              <button
+                                class="btn track-reactivate-btn"
+                                type="button"
+                                data-reactivate-button="<%= track.id %>"
+                                onclick="reactivateTrack(<%= track.id %>, this)">Reactivate</button>
+                            <% } %>
+                            <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
+                          </span>
                         </p>
                         <%- include('partials/track-history-graph', { track }); %>
                       </div>
@@ -167,6 +176,37 @@
   </section>
 </main>
 
+<div class="track-result-modal track-result-success display-none" id="track-reactivation-modal">
+  <div class="track-result-modal-backdrop" onclick="closeReactivationPriceModal()"></div>
+  <div class="track-result-modal-content">
+    <button
+      class="track-result-close-button"
+      type="button"
+      aria-label="Close popup"
+      onclick="closeReactivationPriceModal()">X</button>
+    <div class="track-result-message-wrap">
+      <div class="track-result-badge" id="track-reactivation-badge">Reset track</div>
+      <p class="track-result-message" id="track-reactivation-message"></p>
+    </div>
+    <div class="track-reset-form">
+      <label class="theme-field track-reset-field" for="track-reactivation-price">
+        <span class="theme-label">Current product price</span>
+        <input
+          class="theme-input track-reset-input"
+          type="text"
+          id="track-reactivation-price"
+          placeholder="e.g. 2999"
+          autocomplete="off"
+          inputmode="decimal">
+      </label>
+      <div class="track-result-actions track-reset-actions">
+        <button class="btn track-result-secondary-button" type="button" onclick="closeReactivationPriceModal()">Cancel</button>
+        <button class="btn track-result-primary-button" type="button" id="track-reactivation-submit" onclick="submitReactivationPriceModal()">Reset track</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer>
   <%- include('partials/footer'); %>
 </footer>
@@ -176,6 +216,11 @@
 
 <script>
   let loaderEl = document.getElementById("loader");
+  const reactivationModalEl = document.getElementById("track-reactivation-modal");
+  const reactivationMessageEl = document.getElementById("track-reactivation-message");
+  const reactivationPriceInputEl = document.getElementById("track-reactivation-price");
+  const reactivationSubmitButtonEl = document.getElementById("track-reactivation-submit");
+  let pendingReactivationModalResolver = null;
 
   function showLoader() {
     loaderEl.classList.remove('display-none');
@@ -249,4 +294,145 @@
       hideLoader();
     }
   }
+
+  function setReactivateButtonState(buttonEl, isLoading, loadingLabel = 'Activating...') {
+    if (!buttonEl) {
+      return;
+    }
+
+    buttonEl.disabled = isLoading;
+    buttonEl.innerText = isLoading ? loadingLabel : 'Reactivate';
+  }
+
+  function openReactivationPriceModal(message) {
+    if (pendingReactivationModalResolver) {
+      pendingReactivationModalResolver(null);
+      pendingReactivationModalResolver = null;
+    }
+
+    reactivationMessageEl.innerText = message || 'Could not reactivate this track using the saved price location. Enter the current product price to reset it and try again.';
+    reactivationPriceInputEl.value = '';
+    reactivationModalEl.classList.remove('display-none');
+    reactivationSubmitButtonEl.disabled = false;
+
+    window.setTimeout(() => {
+      reactivationPriceInputEl.focus();
+    }, 0);
+
+    return new Promise((resolve) => {
+      pendingReactivationModalResolver = resolve;
+    });
+  }
+
+  function closeReactivationPriceModal(value = null) {
+    reactivationModalEl.classList.add('display-none');
+    reactivationSubmitButtonEl.disabled = false;
+
+    if (pendingReactivationModalResolver) {
+      const resolve = pendingReactivationModalResolver;
+      pendingReactivationModalResolver = null;
+      resolve(value);
+    }
+  }
+
+  function submitReactivationPriceModal() {
+    const trimmedValue = reactivationPriceInputEl.value.trim();
+    if (!trimmedValue) {
+      showToast('Enter the current product price');
+      reactivationPriceInputEl.focus();
+      return;
+    }
+
+    closeReactivationPriceModal(trimmedValue);
+  }
+
+  async function resetTrackReactivation(trackId, buttonEl, price) {
+    setReactivateButtonState(buttonEl, true, 'Resetting...');
+
+    const response = await fetch(`/track/${trackId}/reactivate/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8'
+      },
+      body: JSON.stringify({ price })
+    });
+    const body = await response.json().catch(() => null);
+
+    if (response.ok) {
+      showToast(body && body.message ? body.message : 'Track reactivated');
+      window.location.reload();
+      return { completed: true };
+    }
+
+    if (response.status === 401) {
+      window.location.href = '/auth/login';
+      return { completed: true };
+    }
+
+    showToast(body && body.error ? body.error : 'Failed to reset track');
+    return { completed: false };
+  }
+
+  async function reactivateTrack(trackId, buttonEl) {
+    let shouldResetButton = true;
+    setReactivateButtonState(buttonEl, true, 'Activating...');
+
+    try {
+      const response = await fetch(`/track/${trackId}/reactivate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+      const body = await response.json().catch(() => null);
+
+      if (response.ok) {
+        shouldResetButton = false;
+        showToast(body && body.message ? body.message : 'Track reactivated');
+        window.location.reload();
+        return;
+      }
+
+      if (response.status === 401) {
+        shouldResetButton = false;
+        window.location.href = '/auth/login';
+        return;
+      }
+
+      if (response.status === 422 && body && body.allowPriceReset) {
+        const price = await openReactivationPriceModal(body.error);
+        if (!price) {
+          return;
+        }
+
+        const resetResult = await resetTrackReactivation(trackId, buttonEl, price);
+        if (resetResult.completed) {
+          shouldResetButton = false;
+        }
+        return;
+      }
+
+      showToast(body && body.error ? body.error : 'Failed to reactivate track');
+    } catch (error) {
+      console.log(error);
+      showToast('Failed to reactivate track');
+    } finally {
+      if (shouldResetButton) {
+        setReactivateButtonState(buttonEl, false);
+      }
+    }
+  }
+
+  reactivationPriceInputEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitReactivationPriceModal();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeReactivationPriceModal();
+    }
+  });
 </script>

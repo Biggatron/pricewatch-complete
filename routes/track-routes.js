@@ -197,6 +197,22 @@ router.delete('/:id', apiAuthCheck, async (req, res, next) => {
   }
 });
 
+router.post('/:id/reactivate', apiAuthCheck, async (req, res, next) => {
+  try {
+    await reactivateTrack(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/:id/reactivate/reset', apiAuthCheck, async (req, res, next) => {
+  try {
+    await resetTrackReactivation(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
+
 async function getTracks(user, res) {
   await ensureTrackSoftDeleteColumn();
 
@@ -290,6 +306,129 @@ async function deleteTrack(req, res) {
   return res.status(200).json({
     message: 'Track deleted',
     trackId
+  });
+}
+
+async function reactivateTrack(req, res) {
+  await ensureTrackSoftDeleteColumn();
+
+  const trackId = Number(req.params.id);
+  const user = req.user;
+
+  if (!Number.isInteger(trackId)) {
+    return res.status(400).json({ error: 'Invalid track id' });
+  }
+
+  const getTrackResult = await query(
+    `SELECT *
+     FROM track
+     WHERE id = $1
+       AND deleted = FALSE`,
+    [trackId]
+  );
+  const track = getTrackResult.rows[0];
+
+  if (!track) {
+    return res.status(404).json({ error: `Track ${trackId} does not exist` });
+  }
+
+  if (track.user_id !== user.id) {
+    console.warn('[track] User tried to reactivate track owned by another user', {
+      actingUserId: user.id,
+      trackId,
+      ownerUserId: track.user_id
+    });
+    return res.status(403).json({ error: 'You can only reactivate your own tracks' });
+  }
+
+  if (Boolean(track.active)) {
+    return res.status(409).json({ error: 'Track is already active' });
+  }
+
+  const result = await crawler.updateSingleTrack(track, {
+    triggerType: 'manual-reactivate',
+    triggeredBy: req.user
+  });
+  const itemResult = result.itemResult || {};
+  const successStatuses = new Set([
+    'reactivated',
+    'updated_lower',
+    'updated_higher',
+    'updated_other'
+  ]);
+
+  if (!successStatuses.has(itemResult.status)) {
+    return res.status(422).json({
+      error: itemResult.errorMessage || 'Could not reactivate this track',
+      allowPriceReset: true,
+      runId: result.runId,
+      result: itemResult
+    });
+  }
+
+  return res.status(200).json({
+    message: 'Track reactivated',
+    trackId,
+    runId: result.runId,
+    result: itemResult
+  });
+}
+
+async function resetTrackReactivation(req, res) {
+  await ensureTrackSoftDeleteColumn();
+
+  const trackId = Number(req.params.id);
+  const user = req.user;
+  const rawPriceInput = String((req.body && req.body.price) || '').trim();
+  const currentPrice = crawler.extractNumber(rawPriceInput);
+
+  if (!Number.isInteger(trackId)) {
+    return res.status(400).json({ error: 'Invalid track id' });
+  }
+
+  if (!currentPrice) {
+    return res.status(400).json({ error: 'Current price is required' });
+  }
+
+  const getTrackResult = await query(
+    `SELECT *
+     FROM track
+     WHERE id = $1
+       AND deleted = FALSE`,
+    [trackId]
+  );
+  const track = getTrackResult.rows[0];
+
+  if (!track) {
+    return res.status(404).json({ error: `Track ${trackId} does not exist` });
+  }
+
+  if (track.user_id !== user.id) {
+    console.warn('[track] User tried to reset reactivation for track owned by another user', {
+      actingUserId: user.id,
+      trackId,
+      ownerUserId: track.user_id
+    });
+    return res.status(403).json({ error: 'You can only reactivate your own tracks' });
+  }
+
+  if (Boolean(track.active)) {
+    return res.status(409).json({ error: 'Track is already active' });
+  }
+
+  const result = await crawler.resetInactiveTrackWithCurrentPrice(track, currentPrice);
+
+  if (!result.success) {
+    return res.status(result.code === 'INVALID_PRICE' ? 400 : 422).json({
+      error: result.error || 'Could not reactivate this track',
+      allowPriceReset: true
+    });
+  }
+
+  return res.status(200).json({
+    message: 'Track reactivated with updated price location',
+    trackId,
+    result
   });
 }
 

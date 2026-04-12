@@ -1,7 +1,7 @@
 const query = require('./db');
 
-const DEFAULT_PRESERVED_TABLES = ['app_config', 'user_account'];
-const CONFIG_ONLY_PRESERVED_TABLES = ['app_config'];
+const DEFAULT_PRESERVED_TABLES = ['app_config', 'domain_access_profiles', 'user_account'];
+const CONFIG_ONLY_PRESERVED_TABLES = ['app_config', 'domain_access_profiles'];
 
 async function main() {
   const force = process.argv.includes('--force');

@@ -10,6 +10,14 @@ const nodemailer = require('nodemailer');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const { getAppConfig } = require('./app-config');
 const {
+  extractDomainFromUrl,
+  getFreshDomainAccessProfileByUrl,
+  DOMAIN_PROFILE_CRAWLER_MODES,
+  DOMAIN_PROFILE_PREVIEW_MODES,
+  DOMAIN_PROFILE_PRICE_LOOKUP_MODES,
+  upsertDomainAccessProfile
+} = require('./domain-access-profile');
+const {
   insertCrawlerFailureLog,
   updateCrawlerFailureLogLinks
 } = require('./crawler-failure-log');
@@ -46,6 +54,7 @@ module.exports = {
   updatePrices,
   extractNumber,
   findAndSavePrices,
+  resetInactiveTrackWithCurrentPrice,
   updateSingleTrack,
   getTrackHtmlPreview,
   getUrlPreview,
@@ -614,7 +623,32 @@ async function fetchTrackUpdateHtml(track, runId) {
 
 async function getUrlPreview(inputUrl) {
   const normalizedUrl = normalizePreviewUrl(inputUrl);
+  const domainAccessProfile = await getFreshDomainAccessProfileByUrl(normalizedUrl);
+
+  if (domainAccessProfile && domainAccessProfile.preview_mode === DOMAIN_PROFILE_PREVIEW_MODES.IFRAME) {
+    return {
+      mode: 'iframe',
+      url: normalizedUrl
+    };
+  }
+
+  if (domainAccessProfile && domainAccessProfile.preview_mode === DOMAIN_PROFILE_PREVIEW_MODES.SCREENSHOT) {
+    const imageUrl = await capturePreviewScreenshot(normalizedUrl);
+    return {
+      mode: 'screenshot',
+      url: normalizedUrl,
+      imageUrl,
+      reason: 'domain_profile'
+    };
+  }
+
   const iframeDecision = await inspectIframeSupport(normalizedUrl);
+  await upsertDomainAccessProfile({
+    url: normalizedUrl,
+    previewMode: iframeDecision.mode === 'screenshot'
+      ? DOMAIN_PROFILE_PREVIEW_MODES.SCREENSHOT
+      : DOMAIN_PROFILE_PREVIEW_MODES.IFRAME
+  });
 
   if (iframeDecision.mode === 'iframe') {
     return {
@@ -1701,8 +1735,18 @@ async function findPriceFromDiv(html, track) {
 };
 
 async function handleMatchedPrice(match, track) {
+  const wasInactive = !track.active;
+  const priceChanged = !arePricesEqual(match, track.curr_price);
+
+  if (wasInactive) {
+    await setTrackAsActive(track, {
+      skipHistory: priceChanged
+    });
+    track.active = true;
+  }
+
   // If tracked price has changed we update database and send email to user
-  if (!arePricesEqual(match, track.curr_price)) {
+  if (priceChanged) {
     await updatePrice(match, track);
     const priceDirection = Number(match) < Number(track.curr_price)
       ? 'lower'
@@ -1729,14 +1773,13 @@ async function handleMatchedPrice(match, track) {
       currentPrice: match,
       priceDirection,
       markedInactive: false,
-      reactivated: false,
+      reactivated: wasInactive,
       failureLogId: null,
       errorMessage: null,
       emailDurationMs
     };
   }
-  if (!track.active) {
-    await setTrackAsActive(track);
+  if (wasInactive) {
     console.info('[crawler] Track reactivated', {
       id: track.id
     });
@@ -2078,16 +2121,21 @@ async function setTrackAsInactive(track) {
     id: track.id,
     productName: track.product_name
   });
+
+  if (!previousActive) {
+    return 0;
+  }
+
   return sendTrackInactiveEmail(track);
 }
 
-async function setTrackAsActive(track) {
+async function setTrackAsActive(track, options = {}) {
   const previousActive = Boolean(track.active);
   const compResult = await query(
     'UPDATE track SET "active" = $1, "last_modified_at" = $2 WHERE "id" = $3',
     [true, new Date(), track.id]
   );
-  if (!previousActive) {
+  if (!previousActive && !options.skipHistory) {
     await insertTrackHistoryEntry({
       trackId: track.id,
       priceBefore: track.curr_price,
@@ -2103,30 +2151,129 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     return;
   }
 
-  let html = '';
+  const result = await findTrackCandidates(trackRequest);
+
+  if (result.tracks.length === 0) {
+    res.status(200).send(result.errorMessage || 'Price not found on page');
+    return;
+  }
+
+  await addTracksToDatabase(result.tracks, res);
+}
+
+async function findTrackCandidates(trackRequest, options = {}) {
+  const domainAccessProfile = options.domainAccessProfile || await getFreshDomainAccessProfileByUrl(trackRequest.price_url);
+  const preferredPriceLookupMode = options.preferredPriceLookupMode
+    || (domainAccessProfile && domainAccessProfile.price_lookup_mode)
+    || null;
+  const attemptModes = buildTrackCandidateAttemptModes(
+    domainAccessProfile && domainAccessProfile.crawler_mode
+  );
+  let lastResult = {
+    tracks: [],
+    title: '',
+    priceLookupMode: null
+  };
+  let lastCrawlerMode = null;
+  let lastHtml = '';
+
+  for (const crawlerMode of attemptModes) {
+    const fullyRenderHTML = crawlerMode === DOMAIN_PROFILE_CRAWLER_MODES.HEADLESS_BROWSER;
+    lastCrawlerMode = crawlerMode;
+    lastHtml = await getTrackCandidateHtml(trackRequest, fullyRenderHTML);
+
+    if (await shouldSaveHtml('create-track', false)) {
+      saveHTMLFile(lastHtml, {
+        action: 'create-track',
+        trackId: null,
+        userId: trackRequest.user_id,
+        url: trackRequest.price_url
+      });
+    }
+
+    const result = findTrackMatchesInHtml(trackRequest, fullyRenderHTML, lastHtml, {
+      preferredPriceLookupMode
+    });
+    lastResult = result;
+
+    if (result.tracks.length > 0) {
+      await upsertDomainAccessProfile({
+        url: trackRequest.price_url,
+        crawlerMode,
+        priceLookupMode: result.priceLookupMode
+      });
+
+      return {
+        ...result,
+        errorMessage: null
+      };
+    }
+  }
+
+  let htmlFilePath = null;
+  if (lastHtml && await shouldSaveHtml('create-track', true)) {
+    htmlFilePath = saveHTMLFile(lastHtml, {
+      action: 'create-track',
+      trackId: null,
+      userId: trackRequest.user_id,
+      url: trackRequest.price_url,
+      suffix: 'price-not-found'
+    });
+  }
+
+  if (options.logFailures !== false) {
+    await addFailedTrackLog(trackRequest, lastResult.title);
+    await logCrawlerFailure(trackRequest, 'find-original-price', new Error('Price not found on page'), {
+      htmlFilePath,
+      fullyRenderHTML: lastCrawlerMode === DOMAIN_PROFILE_CRAWLER_MODES.HEADLESS_BROWSER
+    });
+  }
+
+  console.warn('[crawler] Could not find price on page', {
+    url: trackRequest.price_url,
+    price: trackRequest.orig_price,
+    attemptedCrawlerModes: attemptModes
+  });
+
+  return {
+    ...lastResult,
+    errorMessage: 'Price not found on page'
+  };
+}
+
+function buildTrackCandidateAttemptModes(preferredCrawlerMode) {
+  const defaultModes = [
+    DOMAIN_PROFILE_CRAWLER_MODES.DIRECT_HTML,
+    DOMAIN_PROFILE_CRAWLER_MODES.HEADLESS_BROWSER
+  ];
+
+  if (!preferredCrawlerMode || !defaultModes.includes(preferredCrawlerMode)) {
+    return defaultModes;
+  }
+
+  return [
+    preferredCrawlerMode,
+    ...defaultModes.filter((mode) => mode !== preferredCrawlerMode)
+  ];
+}
+
+async function getTrackCandidateHtml(trackRequest, fullyRenderHTML) {
   if (fullyRenderHTML) {
-    html = await getRenderedHTML({
+    return getRenderedHTML({
       ...trackRequest,
       action: 'create-track',
       requires_javascript: true
     });
-  } else {
-    html = await getHTML({
-      ...trackRequest,
-      action: 'create-track',
-      requires_javascript: false
-    });
-  }
-    
-  if (await shouldSaveHtml('create-track', false)) {
-    saveHTMLFile(html, {
-      action: 'create-track',
-      trackId: null,
-      userId: trackRequest.user_id,
-      url: trackRequest.price_url
-    });
   }
 
+  return getHTML({
+    ...trackRequest,
+    action: 'create-track',
+    requires_javascript: false
+  });
+}
+
+function findTrackMatchesInHtml(trackRequest, fullyRenderHTML, html, options = {}) {
   const dom = new JSDOM(html);
   const document = dom.window.document;
   let title = '';
@@ -2140,128 +2287,293 @@ async function findAndSavePrices(trackRequest, fullyRenderHTML, res) {
     });
   }
 
-  let tracks = [];
+  const matcherSequence = buildPriceLookupMatcherSequence(options.preferredPriceLookupMode);
+
+  for (const matcher of matcherSequence) {
+    const result = matcher({
+      trackRequest,
+      fullyRenderHTML,
+      html,
+      title,
+      document
+    });
+
+    if (result.tracks.length > 0) {
+      return result;
+    }
+  }
+
+  return {
+    tracks: [],
+    title,
+    priceLookupMode: null
+  };
+}
+
+function buildPriceLookupMatcherSequence(preferredPriceLookupMode) {
+  const matcherMap = {
+    [DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE]: findTrackMatchesByDivStructure,
+    [DOMAIN_PROFILE_PRICE_LOOKUP_MODES.STRING_MATCH]: findTrackMatchesByStringMatch
+  };
+  const defaultOrder = [
+    DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE,
+    DOMAIN_PROFILE_PRICE_LOOKUP_MODES.STRING_MATCH
+  ];
+
+  if (!preferredPriceLookupMode || !matcherMap[preferredPriceLookupMode]) {
+    return defaultOrder.map((mode) => matcherMap[mode]);
+  }
+
+  return [
+    matcherMap[preferredPriceLookupMode],
+    ...defaultOrder
+      .filter((mode) => mode !== preferredPriceLookupMode)
+      .map((mode) => matcherMap[mode])
+  ];
+}
+
+function findTrackMatchesByDivStructure({ trackRequest, fullyRenderHTML, html, title, document }) {
   const jsonLdProduct = extractProductDataFromJsonLd(html);
   if (jsonLdProduct && isValidMatchedPrice(jsonLdProduct.price) && arePricesEqual(jsonLdProduct.price, trackRequest.orig_price)) {
     console.info('[crawler] Found original price in JSON-LD product schema', {
       url: trackRequest.price_url,
       price: jsonLdProduct.price
     });
-    tracks.push(createTrackFromMatch({
-      trackRequest,
-      fullyRenderHTML,
-      matchedPrice: jsonLdProduct.price,
-      priceDiv: jsonLdProduct.priceDiv,
-      title: jsonLdProduct.name || title
-    }));
+    return {
+      tracks: [
+        createTrackFromMatch({
+          trackRequest,
+          fullyRenderHTML,
+          matchedPrice: jsonLdProduct.price,
+          priceDiv: jsonLdProduct.priceDiv,
+          title: jsonLdProduct.name || title
+        })
+      ],
+      title,
+      priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE
+    };
   }
 
-  if (tracks.length === 0) {
-    const nextDataProduct = extractProductDataFromNextData(html);
-    if (nextDataProduct && isValidMatchedPrice(nextDataProduct.price) && arePricesEqual(nextDataProduct.price, trackRequest.orig_price)) {
-      console.info('[crawler] Found original price in Next.js __NEXT_DATA__ payload', {
-        url: trackRequest.price_url,
-        price: nextDataProduct.price
-      });
-      tracks.push(createTrackFromMatch({
-        trackRequest,
-        fullyRenderHTML,
-        matchedPrice: nextDataProduct.price,
-        priceDiv: `${NEXT_DATA_PRICE_DIV_PREFIX}${nextDataProduct.priceDiv}`,
-        title: nextDataProduct.name || title
-      }));
-    }
+  const nextDataProduct = extractProductDataFromNextData(html);
+  if (nextDataProduct && isValidMatchedPrice(nextDataProduct.price) && arePricesEqual(nextDataProduct.price, trackRequest.orig_price)) {
+    console.info('[crawler] Found original price in Next.js __NEXT_DATA__ payload', {
+      url: trackRequest.price_url,
+      price: nextDataProduct.price
+    });
+    return {
+      tracks: [
+        createTrackFromMatch({
+          trackRequest,
+          fullyRenderHTML,
+          matchedPrice: nextDataProduct.price,
+          priceDiv: `${NEXT_DATA_PRICE_DIV_PREFIX}${nextDataProduct.priceDiv}`,
+          title: nextDataProduct.name || title
+        })
+      ],
+      title,
+      priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE
+    };
   }
 
-  // Use the DOM API to extract values from elements
-  const elements = Array.from(document.querySelectorAll("*")).map((x) => x.textContent);
+  const elements = Array.from(document.querySelectorAll('*')).map((element) => element.textContent);
   let htmlStringPos = 0;
 
-  console.info('[crawler] Looking for original price on page', {
+  console.info('[crawler] Looking for original price on page using div structure', {
     url: trackRequest.price_url,
     price: trackRequest.orig_price,
     elementCount: elements.length,
     fullyRenderHTML
   });
-  // Loop through elements to find given price
-  for (let i=0;i<elements.length && tracks.length === 0;i++) {
-    let htmlPrice = elements[i] || ''; 
-    let htmlPriceClean = extractNumber(htmlPrice);
-    
-    // If element value matches price given by user it get tracked
-    if (arePricesEqual(htmlPriceClean, trackRequest.orig_price)) {
-      
-      // If price string is not found in html we try to replace spaces with HTML word breaks 
-      let htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
-      if (htmlPriceLocation === -1) {
-        htmlPrice = htmlPrice.replace(/\s+/g, '&nbsp;');
-        htmlPrice = htmlPrice.replace(/kr./g, '');
-        htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
-      }
-      // If price string is not found in html we process next element. 
-      if (htmlPriceLocation === -1) {
-        console.warn('[crawler] Matching price text found but location lookup failed', {
-          url: trackRequest.price_url,
-          candidatePrice: htmlPrice
-        });
-        continue; 
-      };
-      
-      // Get html strings around tracked price to keep track of price
-      htmlStringPos = htmlPriceLocation; 
-      let startPos = htmlPriceLocation - 500;
-      let endPos = htmlPriceLocation + htmlPrice.length + 500;
-      let priceDiv = html.substring(startPos, endPos);
-      let escapedPriceDiv = escapeRegex(priceDiv); 
-      let escapedHTMLPrice = escapeRegex(htmlPrice); 
-      escapedPriceDiv = escapedPriceDiv.replace(escapedHTMLPrice, '(.*?)');
-      //escapedPriceDiv.replace(htmlPrice, '(.*?)');
-      escapedPriceDiv.trim(); // Remove trailing and leading whitespace
 
-      tracks.push(createTrackFromMatch({
-        trackRequest,
-        fullyRenderHTML,
-        matchedPrice: htmlPriceClean,
-        priceDiv: escapedPriceDiv,
-        title
-      }));
-      break; // For now only the first price match is tracked
+  for (let i = 0; i < elements.length; i++) {
+    let htmlPrice = elements[i] || '';
+    const htmlPriceClean = extractNumber(htmlPrice);
+
+    if (!arePricesEqual(htmlPriceClean, trackRequest.orig_price)) {
+      continue;
     }
-  }
-  if (tracks.length === 0) {
-    // If price was not found on plain HTML then attempt to find price on fully rendered page
-    if (fullyRenderHTML) {
-      let htmlFilePath = null;
-      if (await shouldSaveHtml('create-track', true)) {
-        htmlFilePath = saveHTMLFile(html, {
-          action: 'create-track',
-          trackId: null,
-          userId: trackRequest.user_id,
-          url: trackRequest.price_url,
-          suffix: 'price-not-found'
-        });
-      }
 
-      await addFailedTrackLog(trackRequest, title);
-      await logCrawlerFailure(trackRequest, 'find-original-price', new Error('Price not found on page'), {
-        htmlFilePath,
-        fullyRenderHTML
-      });
-      console.warn('[crawler] Could not find price on rendered page', {
+    let htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
+    if (htmlPriceLocation === -1) {
+      htmlPrice = htmlPrice.replace(/\s+/g, '&nbsp;');
+      htmlPrice = htmlPrice.replace(/kr./g, '');
+      htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
+    }
+
+    if (htmlPriceLocation === -1) {
+      console.warn('[crawler] Matching price text found but location lookup failed', {
         url: trackRequest.price_url,
-        price: trackRequest.orig_price
+        candidatePrice: htmlPrice
       });
-      res.status(200).send('Price not found on page'); 
-    } else {
-      await findAndSavePrices(trackRequest, true, res);
+      continue;
     }
-  } else {
-    await addTracksToDatabase(tracks, res);
+
+    htmlStringPos = htmlPriceLocation;
+    const priceDiv = buildPriceDivFromHtmlMatch(html, htmlPriceLocation, htmlPrice);
+
+    return {
+      tracks: [
+        createTrackFromMatch({
+          trackRequest,
+          fullyRenderHTML,
+          matchedPrice: htmlPriceClean,
+          priceDiv,
+          title
+        })
+      ],
+      title,
+      priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE
+    };
   }
+
+  return {
+    tracks: [],
+    title,
+    priceLookupMode: null
+  };
+}
+
+function findTrackMatchesByStringMatch({ trackRequest, fullyRenderHTML, html, title }) {
+  const candidatePattern = /(^|[^\d])([\d][\d\s.,]{0,30}\d|\d)(?!\d)/g;
+  let match;
+
+  console.info('[crawler] Looking for original price on page using string match', {
+    url: trackRequest.price_url,
+    price: trackRequest.orig_price,
+    fullyRenderHTML
+  });
+
+  while ((match = candidatePattern.exec(html)) !== null) {
+    const matchedPriceText = match[2];
+    const matchedPrice = extractNumber(matchedPriceText);
+
+    if (!isValidMatchedPrice(matchedPrice) || !arePricesEqual(matchedPrice, trackRequest.orig_price)) {
+      continue;
+    }
+
+    const matchOffset = match[0].indexOf(matchedPriceText);
+    const matchIndex = match.index + (matchOffset >= 0 ? matchOffset : 0);
+    const priceDiv = buildPriceDivFromHtmlMatch(html, matchIndex, matchedPriceText);
+
+    return {
+      tracks: [
+        createTrackFromMatch({
+          trackRequest,
+          fullyRenderHTML,
+          matchedPrice,
+          priceDiv,
+          title
+        })
+      ],
+      title,
+      priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.STRING_MATCH
+    };
+  }
+
+  return {
+    tracks: [],
+    title,
+    priceLookupMode: null
+  };
+}
+
+function buildPriceDivFromHtmlMatch(html, htmlPriceLocation, matchedPriceText) {
+  const startPos = Math.max(0, htmlPriceLocation - 500);
+  const endPos = Math.min(html.length, htmlPriceLocation + matchedPriceText.length + 500);
+  const priceDiv = html.substring(startPos, endPos);
+  const matchPlaceholder = `__PRICE_MATCH_${Date.now()}__`;
+  let escapedPriceDiv = escapeRegex(priceDiv.replace(matchedPriceText, matchPlaceholder));
+  escapedPriceDiv = escapedPriceDiv.replace(matchPlaceholder, '(.*?)');
+  return escapedPriceDiv.trim();
+}
+
+async function resetInactiveTrackWithCurrentPrice(existingTrack, currentPrice) {
+  if (!isValidMatchedPrice(currentPrice)) {
+    return {
+      success: false,
+      code: 'INVALID_PRICE',
+      error: 'Price is required and must be a valid numeric value'
+    };
+  }
+
+  const trackRequest = {
+    price_url: existingTrack.price_url,
+    orig_price: currentPrice,
+    email: existingTrack.email,
+    user_id: existingTrack.user_id
+  };
+  const result = await findTrackCandidates(trackRequest, {
+    logFailures: false
+  });
+
+  if (result.tracks.length === 0) {
+    return {
+      success: false,
+      code: 'PRICE_NOT_FOUND',
+      error: result.errorMessage || 'Price not found on page'
+    };
+  }
+
+  const resetTrack = result.tracks[0];
+  if (!isValidMatchedPrice(resetTrack.orig_price) || !isValidMatchedPrice(resetTrack.curr_price)) {
+    return {
+      success: false,
+      code: 'INVALID_MATCH',
+      error: 'The located price was not valid'
+    };
+  }
+
+  resetTrack.product_name = (resetTrack.product_name || '').substring(0, 63);
+  const previousPrice = existingTrack.curr_price;
+  const previousActive = Boolean(existingTrack.active);
+  const updatedAt = new Date();
+  const updateResult = await query(
+    'UPDATE track SET "orig_price" = $1, "curr_price" = $2, "requires_javascript" = $3, "price_div" = $4, "product_name" = $5, "active" = $6, "last_modified_at" = $7 WHERE "id" = $8 RETURNING *',
+    [
+      resetTrack.orig_price,
+      resetTrack.curr_price,
+      resetTrack.requires_javascript,
+      resetTrack.price_div,
+      resetTrack.product_name,
+      true,
+      updatedAt,
+      existingTrack.id
+    ]
+  );
+  const updatedTrack = updateResult.rows[0];
+
+  if (!updatedTrack) {
+    return {
+      success: false,
+      code: 'UPDATE_FAILED',
+      error: 'Failed to reactivate track'
+    };
+  }
+
+  if (
+    Number(existingTrack.curr_price) !== Number(resetTrack.curr_price) ||
+    !previousActive
+  ) {
+    await insertTrackHistoryEntry({
+      trackId: existingTrack.id,
+      priceBefore: existingTrack.curr_price,
+      priceAfter: resetTrack.curr_price,
+      active: true,
+      changedAt: updatedAt
+    });
+  }
+
+  return {
+    success: true,
+    track: updatedTrack,
+    previousPrice,
+    currentPrice: resetTrack.curr_price,
+    reactivated: !previousActive
+  };
 }
 
 async function addFailedTrackLog(trackRequest) {
-  let domain = getDomainFromURL(trackRequest.price_url);
+  const domain = extractDomainFromUrl(trackRequest.price_url);
   try {
     // Insert data into the failed_track_logs table
     const result = await query(
@@ -2287,11 +2599,6 @@ async function addFailedTrackLog(trackRequest) {
       error
     });
   }
-}
-
-function getDomainFromURL(url) {
-  let matches = url.match(/^https?\:\/\/([^\/?#]+)(?:[\/?#]|$)/i);
-  return matches && matches[1]; // domain will be null if no match is found
 }
 
 

@@ -65,6 +65,16 @@ CREATE TABLE failed_track_logs (
     "created_at" timestamp
 );
 
+CREATE TABLE domain_access_profiles (
+    "id" serial primary key,
+    "domain" varchar(255) NOT NULL UNIQUE,
+    "preview_mode" varchar(32),
+    "crawler_mode" varchar(32),
+    "price_lookup_mode" varchar(32),
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
 CREATE TABLE app_config (
     "id" serial primary key,
     "config_key" varchar(128) NOT NULL UNIQUE,
@@ -176,6 +186,9 @@ CREATE TABLE track_change_history (
 
 CREATE INDEX preview_screenshot_cache_expires_at_idx
     ON preview_screenshot_cache ("expires_at");
+
+CREATE INDEX domain_access_profiles_updated_at_idx
+    ON domain_access_profiles ("updated_at");
 
 CREATE INDEX user_account_email_verification_token_hash_idx
     ON user_account ("email_verification_token_hash");

@@ -55,7 +55,9 @@ const adminCheck = (req, res, next) => {
       },
       recentFailedTrackLogs: [],
       recentEmailLogs: [],
+      domainProfiles: [],
       emailTemplateTestDefinitions: [],
+      domainFilters: getDomainAccessProfileFilters(req.query),
       activeTab: getActiveAdminTab(req.query.tab)
     });
   }
@@ -68,9 +70,10 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
     const trackFilters = getTrackAdminFilters(req.query);
     const failedTrackFilters = getFailedTrackLogFilters(req.query);
     const emailFilters = getEmailLogFilters(req.query);
+    const domainFilters = getDomainAccessProfileFilters(req.query);
     const emailTemplateTestDefinitions = buildEmailTemplateTestDefinitions(req.user);
 
-    const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs, jobScheduleSummaries] = await Promise.all([
+    const [logs, failedUpdates, recentRuns, tracks, appConfigs, recentFailedTrackLogs, recentEmailLogs, domainProfiles, jobScheduleSummaries] = await Promise.all([
       readRecentLogs(),
       getRecentCrawlerFailureLogs(),
       getRecentCrawlerRuns(),
@@ -78,6 +81,7 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       getAllAppConfig(),
       getRecentFailedTrackLogs(failedTrackFilters),
       getRecentEmailLogs(emailFilters),
+      getDomainAccessProfiles(domainFilters),
       getJobScheduleSummaries()
     ]);
     const previewCacheSummary = await crawler.getPreviewCacheSummary();
@@ -102,10 +106,12 @@ router.get('/', authCheck, adminCheck, async (req, res, next) => {
       previewCacheSummary,
       recentFailedTrackLogs,
       recentEmailLogs,
+      domainProfiles,
       emailTemplateTestDefinitions,
       trackFilters,
       failedTrackFilters,
       emailFilters,
+      domainFilters,
       activeTab,
       logFilePath: getLogFilePath(),
       accessDenied: false
@@ -616,6 +622,49 @@ async function getRecentEmailLogs(filters = getEmailLogFilters()) {
   return result.rows;
 }
 
+async function getDomainAccessProfiles(filters = getDomainAccessProfileFilters()) {
+  const conditions = [];
+  const params = [];
+
+  if (filters.search) {
+    params.push(buildLikePattern(filters.search));
+    const patternParam = `$${params.length}`;
+    conditions.push(`(
+      COALESCE(domain, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(preview_mode, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(crawler_mode, '') ILIKE ${patternParam} ESCAPE '\\'
+      OR COALESCE(price_lookup_mode, '') ILIKE ${patternParam} ESCAPE '\\'
+    )`);
+  }
+
+  if (filters.previewMode !== 'all') {
+    params.push(filters.previewMode);
+    conditions.push(`preview_mode = $${params.length}`);
+  }
+
+  if (filters.crawlerMode !== 'all') {
+    params.push(filters.crawlerMode);
+    conditions.push(`crawler_mode = $${params.length}`);
+  }
+
+  if (filters.priceLookupMode !== 'all') {
+    params.push(filters.priceLookupMode);
+    conditions.push(`price_lookup_mode = $${params.length}`);
+  }
+
+  params.push(filters.maxRows);
+  const result = await query(
+    `SELECT *
+     FROM domain_access_profiles
+     ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY ${getDomainAccessProfileSortClause(filters.sort)}
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows;
+}
+
 function normalizeConfigValue(value, dataType) {
   if (dataType === 'boolean') {
     if (value === true || value === 'true' || value === 'on' || value === '1' || value === 1) {
@@ -656,6 +705,7 @@ function getActiveAdminTab(tab) {
     'overview',
     'jobs',
     'tracks',
+    'domains',
     'config',
     'cache',
     'service-logs',
@@ -710,6 +760,33 @@ function getEmailLogFilters(queryParams = {}) {
       'created_desc'
     ),
     maxRows: parseMaxRows(queryParams.email_max_rows, 50)
+  };
+}
+
+function getDomainAccessProfileFilters(queryParams = {}) {
+  return {
+    search: String(queryParams.domain_search || '').trim(),
+    previewMode: normalizeSelectValue(
+      queryParams.domain_preview_mode,
+      ['all', 'iframe', 'screenshot'],
+      'all'
+    ),
+    crawlerMode: normalizeSelectValue(
+      queryParams.domain_crawler_mode,
+      ['all', 'direct_html', 'headless_browser'],
+      'all'
+    ),
+    priceLookupMode: normalizeSelectValue(
+      queryParams.domain_price_lookup_mode,
+      ['all', 'div_structure', 'string_match'],
+      'all'
+    ),
+    sort: normalizeSelectValue(
+      queryParams.domain_sort,
+      ['updated_desc', 'updated_asc', 'created_desc', 'created_asc', 'domain_asc', 'domain_desc'],
+      'updated_desc'
+    ),
+    maxRows: parseMaxRows(queryParams.domain_max_rows, 50)
   };
 }
 
@@ -772,6 +849,19 @@ function getEmailSortClause(sort, effectiveStatusExpression = 'status') {
   };
 
   return emailSortMap[sort] || emailSortMap.created_desc;
+}
+
+function getDomainAccessProfileSortClause(sort) {
+  const domainSortMap = {
+    updated_desc: 'updated_at DESC NULLS LAST, id DESC',
+    updated_asc: 'updated_at ASC NULLS LAST, id ASC',
+    created_desc: 'created_at DESC NULLS LAST, id DESC',
+    created_asc: 'created_at ASC NULLS LAST, id ASC',
+    domain_asc: 'domain ASC NULLS LAST, id DESC',
+    domain_desc: 'domain DESC NULLS LAST, id DESC'
+  };
+
+  return domainSortMap[sort] || domainSortMap.updated_desc;
 }
 
 function isCronConfigKey(configKey) {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <%- include('partials/head'); %>
-  <link rel="stylesheet" href="/css/track.css?v=20260405-2" type="text/css">
+  <link rel="stylesheet" href="/css/track.css?v=20260412-1" type="text/css">
 </head>
 <body class="body-container">
 
@@ -23,7 +23,18 @@
 
         <label class="theme-field" for="url">
           <span class="theme-label">Product URL</span>
-          <input class="theme-input" type="url" name="track_url" id="url" value="" placeholder="https://example.com/product" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <div class="track-url-input-row">
+            <input class="theme-input" type="url" name="track_url" id="url" value="" placeholder="https://example.com/product" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button
+              class="track-clipboard-btn"
+              id="paste-url-button"
+              type="button"
+              aria-label="Paste URL from clipboard"
+              title="Paste URL from clipboard"
+              onclick="pasteUrlFromClipboard()">
+              <img class="track-clipboard-icon" src="/images/paste-icon.png" alt="" aria-hidden="true">
+            </button>
+          </div>
         </label>
 
         <label class="theme-field" for="price">
@@ -91,6 +102,7 @@
   const trackResultMessageEl = document.getElementById("track-result-message");
   const trackResultActionsEl = document.getElementById("track-result-actions");
   const trackPriceButtonEl = document.getElementById("track-price-button");
+  const pasteUrlButtonEl = document.getElementById("paste-url-button");
   let previewDebounceTimer = null;
   let previewAbortController = null;
   let previewRequestId = 0;
@@ -192,6 +204,45 @@
     isSubmittingTrack = isSubmitting;
     trackPriceButtonEl.disabled = isSubmitting;
     trackPriceButtonEl.innerText = isSubmitting ? 'Tracking...' : 'Track price';
+  }
+
+  function setPasteUrlButtonState(isLoading, label) {
+    if (!pasteUrlButtonEl) {
+      return;
+    }
+
+    pasteUrlButtonEl.disabled = isLoading;
+    const buttonLabel = label || (isLoading ? 'Pasting URL from clipboard' : 'Paste URL from clipboard');
+    pasteUrlButtonEl.setAttribute('aria-label', buttonLabel);
+    pasteUrlButtonEl.setAttribute('title', buttonLabel);
+  }
+
+  async function pasteUrlFromClipboard() {
+    if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+      showTrackResultModal('Clipboard access is not available in this browser.');
+      return;
+    }
+
+    setPasteUrlButtonState(true, 'Pasting...');
+
+    try {
+      const clipboardText = (await navigator.clipboard.readText()).trim();
+
+      if (!clipboardText) {
+        showTrackResultModal('Clipboard is empty.');
+        return;
+      }
+
+      urlInputEl.value = clipboardText;
+      queuePreviewLoad.call(urlInputEl);
+      urlInputEl.focus();
+      urlInputEl.select();
+    } catch (error) {
+      console.log(error);
+      showTrackResultModal('Could not read the clipboard. Please allow clipboard access and try again.');
+    } finally {
+      setPasteUrlButtonState(false, 'Paste');
+    }
   }
 
   async function postTrack(track) {

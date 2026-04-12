@@ -19,6 +19,14 @@ const defaultAppConfig = [
     value_help: 'Whole number greater than 0. Smaller values make matching looser, larger values make matching stricter.'
   },
   {
+    config_key: 'crawler.domain_access_profile_max_age_ms',
+    category: 'crawler',
+    value: String(constants.crawler.domainAccessProfileMaxAgeMs),
+    data_type: 'integer',
+    description: 'How long cached per-domain preview and crawler access settings stay trusted before being rediscovered.',
+    value_help: 'Whole number greater than 0. Example: 604800000 = 7 days.'
+  },
+  {
     config_key: 'preview.screenshot_cache_duration_ms',
     category: 'preview',
     value: String(constants.preview.screenshotCacheDurationMs),

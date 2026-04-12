@@ -28,6 +28,7 @@
         <button class="admin-tab-button <%= activeTab === 'overview' ? 'is-active' : '' %>" type="button" data-tab-target="overview" role="tab" aria-selected="<%= activeTab === 'overview' ? 'true' : 'false' %>">Overview</button>
         <button class="admin-tab-button <%= activeTab === 'jobs' ? 'is-active' : '' %>" type="button" data-tab-target="jobs" role="tab" aria-selected="<%= activeTab === 'jobs' ? 'true' : 'false' %>">Job Schedule</button>
         <button class="admin-tab-button <%= activeTab === 'tracks' ? 'is-active' : '' %>" type="button" data-tab-target="tracks" role="tab" aria-selected="<%= activeTab === 'tracks' ? 'true' : 'false' %>">Track Manager</button>
+        <button class="admin-tab-button <%= activeTab === 'domains' ? 'is-active' : '' %>" type="button" data-tab-target="domains" role="tab" aria-selected="<%= activeTab === 'domains' ? 'true' : 'false' %>">Domains</button>
         <button class="admin-tab-button <%= activeTab === 'config' ? 'is-active' : '' %>" type="button" data-tab-target="config" role="tab" aria-selected="<%= activeTab === 'config' ? 'true' : 'false' %>">Config</button>
         <button class="admin-tab-button <%= activeTab === 'cache' ? 'is-active' : '' %>" type="button" data-tab-target="cache" role="tab" aria-selected="<%= activeTab === 'cache' ? 'true' : 'false' %>">Cache</button>
         <button class="admin-tab-button <%= activeTab === 'service-logs' ? 'is-active' : '' %>" type="button" data-tab-target="service-logs" role="tab" aria-selected="<%= activeTab === 'service-logs' ? 'true' : 'false' %>">Service Logs</button>
@@ -409,6 +410,95 @@
                           <%- include('partials/track-history-graph', { track }); %>
                         </div>
                       </td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </section>
+
+      <section class="admin-tab-panel <%= activeTab === 'domains' ? 'is-active' : '' %>" data-tab-panel="domains">
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Domain access profiles</h2>
+          <p class="admin-subtitle">Filtered rows from <code>domain_access_profiles</code></p>
+          <form class="admin-filter-form" method="GET" action="/admin" autocomplete="off">
+            <input type="hidden" name="tab" value="domains" autocomplete="off">
+            <label>
+              <span>Search</span>
+              <input class="admin-input" type="text" name="domain_search" value="<%= domainFilters.search %>" placeholder="Domain or mode" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>Preview</span>
+              <select class="admin-input" name="domain_preview_mode">
+                <option value="all" <%= domainFilters.previewMode === 'all' ? 'selected' : '' %>>All</option>
+                <option value="iframe" <%= domainFilters.previewMode === 'iframe' ? 'selected' : '' %>>Iframe</option>
+                <option value="screenshot" <%= domainFilters.previewMode === 'screenshot' ? 'selected' : '' %>>Screenshot</option>
+              </select>
+            </label>
+            <label>
+              <span>Crawler</span>
+              <select class="admin-input" name="domain_crawler_mode">
+                <option value="all" <%= domainFilters.crawlerMode === 'all' ? 'selected' : '' %>>All</option>
+                <option value="direct_html" <%= domainFilters.crawlerMode === 'direct_html' ? 'selected' : '' %>>Direct HTML</option>
+                <option value="headless_browser" <%= domainFilters.crawlerMode === 'headless_browser' ? 'selected' : '' %>>Headless browser</option>
+              </select>
+            </label>
+            <label>
+              <span>Price lookup</span>
+              <select class="admin-input" name="domain_price_lookup_mode">
+                <option value="all" <%= domainFilters.priceLookupMode === 'all' ? 'selected' : '' %>>All</option>
+                <option value="div_structure" <%= domainFilters.priceLookupMode === 'div_structure' ? 'selected' : '' %>>Div structure</option>
+                <option value="string_match" <%= domainFilters.priceLookupMode === 'string_match' ? 'selected' : '' %>>String match</option>
+              </select>
+            </label>
+            <label>
+              <span>Sort</span>
+              <select class="admin-input" name="domain_sort">
+                <option value="updated_desc" <%= domainFilters.sort === 'updated_desc' ? 'selected' : '' %>>Recently updated</option>
+                <option value="updated_asc" <%= domainFilters.sort === 'updated_asc' ? 'selected' : '' %>>Oldest updated</option>
+                <option value="created_desc" <%= domainFilters.sort === 'created_desc' ? 'selected' : '' %>>Newest created</option>
+                <option value="created_asc" <%= domainFilters.sort === 'created_asc' ? 'selected' : '' %>>Oldest created</option>
+                <option value="domain_asc" <%= domainFilters.sort === 'domain_asc' ? 'selected' : '' %>>Domain A-Z</option>
+                <option value="domain_desc" <%= domainFilters.sort === 'domain_desc' ? 'selected' : '' %>>Domain Z-A</option>
+              </select>
+            </label>
+            <label>
+              <span>Max rows</span>
+              <input class="admin-input" type="number" name="domain_max_rows" min="1" max="500" value="<%= domainFilters.maxRows %>" autocomplete="off">
+            </label>
+            <div class="admin-filter-actions">
+              <button class="btn btn-small" type="submit">Apply</button>
+              <a class="btn btn-small admin-cancel-btn admin-link-button" href="/admin?tab=domains">Reset</a>
+            </div>
+          </form>
+          <% if (!domainProfiles || domainProfiles.length === 0) { %>
+            <p>No domain access profiles found.</p>
+          <% } else { %>
+            <div class="admin-table-scroll">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Domain</th>
+                    <th>Preview</th>
+                    <th>Crawler</th>
+                    <th>Price lookup</th>
+                    <th>Created</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% domainProfiles.forEach((profile) => { %>
+                    <tr>
+                      <td><%= profile.id %></td>
+                      <td><%= profile.domain || '-' %></td>
+                      <td><%= profile.preview_mode || '-' %></td>
+                      <td><%= profile.crawler_mode || '-' %></td>
+                      <td><%= profile.price_lookup_mode || '-' %></td>
+                      <td><%= profile.created_at ? new Date(profile.created_at).toLocaleString() : '-' %></td>
+                      <td><%= profile.updated_at ? new Date(profile.updated_at).toLocaleString() : '-' %></td>
                     </tr>
                   <% }); %>
                 </tbody>

@@ -1,19 +1,14 @@
-const puppeteer = require('puppeteer');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 const query = require('../db/db');
 const keys = require('../config/keys');
 const constants = require('../config/const');
-const nodemailer = require('nodemailer');
-const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const { getAppConfig } = require('./app-config');
 const {
   extractDomainFromUrl,
   getFreshDomainAccessProfileByUrl,
   DOMAIN_PROFILE_CRAWLER_MODES,
-  DOMAIN_PROFILE_PREVIEW_MODES,
   DOMAIN_PROFILE_PRICE_LOOKUP_MODES,
   upsertDomainAccessProfile
 } = require('./domain-access-profile');
@@ -29,367 +24,55 @@ const {
 const { insertTrackHistoryEntry } = require('./track-history-log');
 const { ensureTrackSoftDeleteColumn } = require('./track-soft-delete');
 const { ensureTrackUniqueActiveIndex } = require('./track-uniqueness');
-const { renderEmailTemplate } = require('./email-template');
+const {
+  deliverPendingEmails: deliverPendingEmailsExternal,
+  sendImmediateTemplateEmail: sendImmediateTemplateEmailExternal,
+  sendPriceUpdateEmail: queuePriceUpdateEmail,
+  sendTemplateTestEmail: sendTemplateTestEmailExternal,
+  sendTrackInactiveEmail: queueTrackInactiveEmail
+} = require('./email-delivery');
+const {
+  fetchHtmlDirect,
+  fetchRenderedHtml
+} = require('./crawler-http');
+const {
+  cleanupStoredPreviewFiles: cleanupStoredPreviewFilesExternal,
+  getPreviewCacheSummary: getPreviewCacheSummaryExternal,
+  getUrlPreview: getUrlPreviewExternal
+} = require('./preview-cache');
+const {
+  DOMAIN_PRICE_SELECTOR_TYPES,
+  ensureDomainPriceSelectorTable,
+  getDomainPriceSelectorsByUrl,
+  markDomainPriceSelectorFailure,
+  markDomainPriceSelectorSuccess,
+  upsertDomainPriceSelector
+} = require('./domain-price-selector');
 const MAX_MATCH_PRICE = 1000000000;
-const MAX_EMAIL_DELIVERY_ATTEMPTS = 3;
-const PREVIEW_OUTPUT_DIR = path.join(__dirname, '..', 'public', 'generated-previews');
-const PREVIEW_IMAGE_EXTENSION = '.png';
-const PREVIEW_TIMEOUT_MS = 6000;
-const PREVIEW_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
-const PREVIEW_ORPHAN_GRACE_MS = 1000 * 60 * 5;
-const PREVIEW_CACHE_CONFIG_KEY = 'preview.screenshot_cache_duration_ms';
-const PREVIEW_POST_NAVIGATION_DELAY_CONFIG_KEY = 'preview.post_navigation_delay_ms';
-const PREVIEW_POST_BANNER_DELAY_CONFIG_KEY = 'preview.post_banner_delay_ms';
-const PREVIEW_VIEWPORT = {
-  width: 1280,
-  height: 1600
-};
-const previewScreenshotInflight = new Map();
-let previewBrowserPromise = null;
-let lastPreviewCleanupAt = 0;
-let previewCacheTableReadyPromise = null;
-let previewLegacyMigrationPromise = null;
 
 module.exports = {
   updatePrices,
   extractNumber,
   findAndSavePrices,
+  detectTrackByUrl,
   resetInactiveTrackWithCurrentPrice,
   updateSingleTrack,
   getTrackHtmlPreview,
-  getUrlPreview,
-  deliverPendingEmails,
-  sendImmediateTemplateEmail,
-  sendTemplateTestEmail,
-  cleanupStoredPreviewFiles,
-  getPreviewCacheSummary
+  getUrlPreview: getUrlPreviewExternal,
+  deliverPendingEmails: deliverPendingEmailsExternal,
+  sendImmediateTemplateEmail: sendImmediateTemplateEmailExternal,
+  sendTemplateTestEmail: sendTemplateTestEmailExternal,
+  cleanupStoredPreviewFiles: cleanupStoredPreviewFilesExternal,
+  getPreviewCacheSummary: getPreviewCacheSummaryExternal
 };
 
-async function ensurePreviewCacheTable() {
-  if (!previewCacheTableReadyPromise) {
-    previewCacheTableReadyPromise = ensurePreviewCacheTableInternal().catch((error) => {
-      previewCacheTableReadyPromise = null;
-      throw error;
-    });
-  }
-
-  await previewCacheTableReadyPromise;
-  await ensureLegacyPreviewMetadataMigrated();
-}
-
-async function ensurePreviewCacheTableInternal() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS preview_screenshot_cache (
-      "id" serial PRIMARY KEY,
-      "url" varchar(2048) NOT NULL UNIQUE,
-      "file_name" varchar(255) NOT NULL UNIQUE,
-      "file_path" varchar(1024) NOT NULL,
-      "public_path" varchar(1024) NOT NULL,
-      "created_at" timestamp NOT NULL DEFAULT now(),
-      "last_accessed_at" timestamp NOT NULL DEFAULT now(),
-      "expires_at" timestamp NOT NULL
-    )
-  `);
-
-  await query(`
-    ALTER TABLE preview_screenshot_cache
-      ADD COLUMN IF NOT EXISTS url varchar(2048),
-      ADD COLUMN IF NOT EXISTS file_name varchar(255),
-      ADD COLUMN IF NOT EXISTS file_path varchar(1024),
-      ADD COLUMN IF NOT EXISTS public_path varchar(1024),
-      ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now(),
-      ADD COLUMN IF NOT EXISTS last_accessed_at timestamp NOT NULL DEFAULT now(),
-      ADD COLUMN IF NOT EXISTS expires_at timestamp
-  `);
-
-  await query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS preview_screenshot_cache_url_idx
-    ON preview_screenshot_cache (url)
-  `);
-
-  await query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS preview_screenshot_cache_file_name_idx
-    ON preview_screenshot_cache (file_name)
-  `);
-
-  await query(`
-    CREATE INDEX IF NOT EXISTS preview_screenshot_cache_expires_at_idx
-    ON preview_screenshot_cache (expires_at)
-  `);
-}
-
-async function getPreviewCacheDurationMs() {
-  const fallbackValue = constants.preview && constants.preview.screenshotCacheDurationMs
-    ? constants.preview.screenshotCacheDurationMs
-    : 1000 * 60 * 60 * 2;
-  const configuredValue = await getAppConfig(PREVIEW_CACHE_CONFIG_KEY, fallbackValue);
-  const parsedValue = Number(configuredValue);
-
-  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-    return fallbackValue;
-  }
-
-  return Math.floor(parsedValue);
-}
-
-async function getPreviewPostNavigationDelayMs() {
-  const fallbackValue = constants.preview && Number.isFinite(constants.preview.postNavigationDelayMs)
-    ? constants.preview.postNavigationDelayMs
-    : 150;
-  const configuredValue = await getAppConfig(PREVIEW_POST_NAVIGATION_DELAY_CONFIG_KEY, fallbackValue);
-  const parsedValue = Number(configuredValue);
-
-  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
-    return fallbackValue;
-  }
-
-  return Math.floor(parsedValue);
-}
-
-async function getPreviewPostBannerDelayMs() {
-  const fallbackValue = constants.preview && Number.isFinite(constants.preview.postBannerDelayMs)
-    ? constants.preview.postBannerDelayMs
-    : 250;
-  const configuredValue = await getAppConfig(PREVIEW_POST_BANNER_DELAY_CONFIG_KEY, fallbackValue);
-  const parsedValue = Number(configuredValue);
-
-  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
-    return fallbackValue;
-  }
-
-  return Math.floor(parsedValue);
-}
-
-function getPreviewPublicPath(fileName) {
-  return `/generated-previews/${fileName}`;
-}
-
-function safelyRemovePreviewArtifacts(filePath) {
-  if (!filePath) {
-    return;
-  }
-
-  try {
-    fs.rmSync(filePath, { force: true });
-  } catch (error) {
-    console.warn('[preview] Failed to remove preview screenshot file', {
-      filePath,
-      error
-    });
-  }
-
-  try {
-    fs.rmSync(`${filePath}.json`, { force: true });
-  } catch (error) {
-    console.warn('[preview] Failed to remove legacy preview metadata file', {
-      filePath,
-      error
-    });
-  }
-}
-
-function removeLegacyPreviewMetadataFile(metadataPath) {
-  try {
-    fs.rmSync(metadataPath, { force: true });
-  } catch (error) {
-    console.warn('[preview] Failed to remove legacy preview metadata file', {
-      metadataPath,
-      error
-    });
-  }
-}
-
-function normalizePreviewCacheRow(row) {
-  if (!row) {
-    return null;
-  }
-
-  const fileName = row.file_name || (row.file_path ? path.basename(row.file_path) : null);
+function getHtmlFetchOptions() {
   return {
-    ...row,
-    file_name: fileName,
-    public_path: row.public_path || (fileName ? getPreviewPublicPath(fileName) : null),
-    created_at: row.created_at ? new Date(row.created_at) : null,
-    last_accessed_at: row.last_accessed_at ? new Date(row.last_accessed_at) : null,
-    expires_at: row.expires_at ? new Date(row.expires_at) : null
+    getActionName,
+    logCrawlerFailure,
+    saveHTMLFile,
+    shouldSaveHtml
   };
-}
-
-function readLegacyPreviewMetadata(metadataPath) {
-  try {
-    const rawMetadata = fs.readFileSync(metadataPath, 'utf8');
-    const parsedMetadata = JSON.parse(rawMetadata);
-
-    return {
-      url: parsedMetadata.url || null,
-      imageUrl: parsedMetadata.imageUrl || null,
-      createdAt: parsedMetadata.createdAt ? new Date(parsedMetadata.createdAt) : null,
-      expiresAt: parsedMetadata.expiresAt ? new Date(parsedMetadata.expiresAt) : null
-    };
-  } catch (error) {
-    console.warn('[preview] Failed to read legacy preview metadata file', {
-      metadataPath,
-      error
-    });
-    return null;
-  }
-}
-
-async function ensureLegacyPreviewMetadataMigrated() {
-  if (!previewLegacyMigrationPromise) {
-    previewLegacyMigrationPromise = migrateLegacyPreviewMetadataFiles().catch((error) => {
-      previewLegacyMigrationPromise = null;
-      throw error;
-    });
-  }
-
-  await previewLegacyMigrationPromise;
-}
-
-async function migrateLegacyPreviewMetadataFiles() {
-  if (!fs.existsSync(PREVIEW_OUTPUT_DIR)) {
-    return;
-  }
-
-  const fileNames = fs.readdirSync(PREVIEW_OUTPUT_DIR)
-    .filter((fileName) => fileName.endsWith(`${PREVIEW_IMAGE_EXTENSION}.json`));
-
-  for (const fileName of fileNames) {
-    const metadataPath = path.join(PREVIEW_OUTPUT_DIR, fileName);
-    const filePath = metadataPath.slice(0, -'.json'.length);
-    const fileExists = fs.existsSync(filePath);
-    const metadata = readLegacyPreviewMetadata(metadataPath);
-
-    if (!fileExists || !metadata || !metadata.url) {
-      removeLegacyPreviewMetadataFile(metadataPath);
-      continue;
-    }
-
-    const createdAt = metadata.createdAt && Number.isFinite(metadata.createdAt.getTime())
-      ? metadata.createdAt
-      : new Date();
-    const expiresAt = metadata.expiresAt && Number.isFinite(metadata.expiresAt.getTime())
-      ? metadata.expiresAt
-      : new Date(createdAt.getTime() + await getPreviewCacheDurationMs());
-
-    await query(
-      `INSERT INTO preview_screenshot_cache (
-        url,
-        file_name,
-        file_path,
-        public_path,
-        created_at,
-        last_accessed_at,
-        expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (url) DO UPDATE SET
-        file_name = EXCLUDED.file_name,
-        file_path = EXCLUDED.file_path,
-        public_path = EXCLUDED.public_path,
-        created_at = EXCLUDED.created_at,
-        last_accessed_at = EXCLUDED.last_accessed_at,
-        expires_at = EXCLUDED.expires_at`,
-      [
-        metadata.url,
-        path.basename(filePath),
-        filePath,
-        metadata.imageUrl || getPreviewPublicPath(path.basename(filePath)),
-        createdAt,
-        createdAt,
-        expiresAt
-      ]
-    );
-
-    removeLegacyPreviewMetadataFile(metadataPath);
-  }
-}
-
-async function getPreviewCacheEntryByUrl(url) {
-  await ensurePreviewCacheTable();
-  const result = await query(
-    `SELECT *
-     FROM preview_screenshot_cache
-     WHERE url = $1
-     LIMIT 1`,
-    [url]
-  );
-
-  return normalizePreviewCacheRow(result.rows[0] || null);
-}
-
-async function deletePreviewCacheEntry(entry, options = {}) {
-  if (!entry || !entry.id) {
-    return;
-  }
-
-  await ensurePreviewCacheTable();
-
-  if (options.deleteFile !== false) {
-    safelyRemovePreviewArtifacts(entry.file_path);
-  }
-
-  await query(
-    `DELETE FROM preview_screenshot_cache
-     WHERE id = $1`,
-    [entry.id]
-  );
-}
-
-async function touchPreviewCacheEntry(entry) {
-  if (!entry || !entry.id) {
-    return null;
-  }
-
-  const expiresAt = new Date(Date.now() + await getPreviewCacheDurationMs());
-  const touchedAt = new Date();
-
-  const result = await query(
-    `UPDATE preview_screenshot_cache
-     SET last_accessed_at = $2,
-         expires_at = $3
-     WHERE id = $1
-     RETURNING *`,
-    [entry.id, touchedAt, expiresAt]
-  );
-
-  return normalizePreviewCacheRow(result.rows[0] || null);
-}
-
-async function upsertPreviewCacheEntry({ url, fileName, filePath, publicPath, createdAt }) {
-  await ensurePreviewCacheTable();
-
-  const existingEntry = await getPreviewCacheEntryByUrl(url);
-  const cacheDurationMs = await getPreviewCacheDurationMs();
-  const normalizedCreatedAt = createdAt || new Date();
-  const lastAccessedAt = normalizedCreatedAt;
-  const expiresAt = new Date(normalizedCreatedAt.getTime() + cacheDurationMs);
-
-  const result = await query(
-    `INSERT INTO preview_screenshot_cache (
-      url,
-      file_name,
-      file_path,
-      public_path,
-      created_at,
-      last_accessed_at,
-      expires_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    ON CONFLICT (url) DO UPDATE SET
-      file_name = EXCLUDED.file_name,
-      file_path = EXCLUDED.file_path,
-      public_path = EXCLUDED.public_path,
-      created_at = EXCLUDED.created_at,
-      last_accessed_at = EXCLUDED.last_accessed_at,
-      expires_at = EXCLUDED.expires_at
-    RETURNING *`,
-    [url, fileName, filePath, publicPath, normalizedCreatedAt, lastAccessedAt, expiresAt]
-  );
-
-  if (existingEntry && existingEntry.file_path && existingEntry.file_path !== filePath) {
-    safelyRemovePreviewArtifacts(existingEntry.file_path);
-  }
-
-  return normalizePreviewCacheRow(result.rows[0] || null);
 }
 
 function updatePrices(options = {}) {
@@ -561,10 +244,10 @@ async function getTrackHtmlPreview(track) {
   };
 
   if (track.requires_javascript) {
-    return getRenderedHTML(trackContext);
+    return fetchRenderedHtml(trackContext, getHtmlFetchOptions());
   }
 
-  return getHTML(trackContext);
+  return fetchHtmlDirect(trackContext, getHtmlFetchOptions());
 }
 
 function groupTracksByUpdateTarget(tracks) {
@@ -612,1008 +295,13 @@ async function fetchTrackUpdateHtml(track, runId) {
   };
 
   const html = track.requires_javascript
-    ? await getRenderedHTML(trackContext)
-    : await getHTML(trackContext);
+    ? await fetchRenderedHtml(trackContext, getHtmlFetchOptions())
+    : await fetchHtmlDirect(trackContext, getHtmlFetchOptions());
 
   return {
     html,
     stage: track.requires_javascript ? 'render-html' : 'fetch-html'
   };
-}
-
-async function getUrlPreview(inputUrl) {
-  const normalizedUrl = normalizePreviewUrl(inputUrl);
-  const domainAccessProfile = await getFreshDomainAccessProfileByUrl(normalizedUrl);
-
-  if (domainAccessProfile && domainAccessProfile.preview_mode === DOMAIN_PROFILE_PREVIEW_MODES.IFRAME) {
-    return {
-      mode: 'iframe',
-      url: normalizedUrl
-    };
-  }
-
-  if (domainAccessProfile && domainAccessProfile.preview_mode === DOMAIN_PROFILE_PREVIEW_MODES.SCREENSHOT) {
-    const imageUrl = await capturePreviewScreenshot(normalizedUrl);
-    return {
-      mode: 'screenshot',
-      url: normalizedUrl,
-      imageUrl,
-      reason: 'domain_profile'
-    };
-  }
-
-  const iframeDecision = await inspectIframeSupport(normalizedUrl);
-  await upsertDomainAccessProfile({
-    url: normalizedUrl,
-    previewMode: iframeDecision.mode === 'screenshot'
-      ? DOMAIN_PROFILE_PREVIEW_MODES.SCREENSHOT
-      : DOMAIN_PROFILE_PREVIEW_MODES.IFRAME
-  });
-
-  if (iframeDecision.mode === 'iframe') {
-    return {
-      mode: 'iframe',
-      url: iframeDecision.url
-    };
-  }
-
-  const imageUrl = await capturePreviewScreenshot(iframeDecision.url);
-  return {
-    mode: 'screenshot',
-    url: iframeDecision.url,
-    imageUrl,
-    reason: iframeDecision.reason
-  };
-}
-
-function getRandomUserAgent() {
-  const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:45.0) Gecko/20100101 Firefox/45.0'
-  ];
-  return userAgents[Math.floor(Math.random() * userAgents.length)];
-}
-
-function normalizePreviewUrl(inputUrl) {
-  let parsedUrl;
-
-  try {
-    parsedUrl = new URL(String(inputUrl || '').trim());
-  } catch (error) {
-    const invalidUrlError = new Error('Enter a valid http(s) URL');
-    invalidUrlError.code = 'INVALID_PREVIEW_URL';
-    throw invalidUrlError;
-  }
-
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    const invalidProtocolError = new Error('Preview URL must use http or https');
-    invalidProtocolError.code = 'INVALID_PREVIEW_URL';
-    throw invalidProtocolError;
-  }
-
-  const hostname = parsedUrl.hostname.toLowerCase();
-  if (hostname === 'localhost' || hostname.endsWith('.local') || isPrivateHostname(hostname)) {
-    const blockedHostError = new Error('Preview URL host is not allowed');
-    blockedHostError.code = 'INVALID_PREVIEW_URL';
-    throw blockedHostError;
-  }
-
-  return parsedUrl.toString();
-}
-
-function isPrivateHostname(hostname) {
-  if (!hostname) {
-    return true;
-  }
-
-  if (hostname === '::1' || hostname === '[::1]') {
-    return true;
-  }
-
-  const normalizedHost = hostname.replace(/^\[|\]$/g, '');
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(normalizedHost)) {
-    const parts = normalizedHost.split('.').map((value) => Number.parseInt(value, 10));
-    if (parts.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
-      return true;
-    }
-
-    return (
-      parts[0] === 10 ||
-      parts[0] === 127 ||
-      (parts[0] === 169 && parts[1] === 254) ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168)
-    );
-  }
-
-  return (
-    normalizedHost.startsWith('fc') ||
-    normalizedHost.startsWith('fd') ||
-    normalizedHost.startsWith('fe80:') ||
-    normalizedHost.startsWith('::ffff:127.')
-  );
-}
-
-async function inspectIframeSupport(url) {
-  let response = null;
-
-  try {
-    response = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'follow',
-      headers: {
-        'User-Agent': getRandomUserAgent()
-      }
-    });
-
-    if (!response.ok || response.status === 405 || response.status === 501) {
-      if (response.body && typeof response.body.destroy === 'function') {
-        response.body.destroy();
-      }
-
-      response = await fetch(url, {
-        method: 'GET',
-        redirect: 'follow',
-        headers: {
-          'User-Agent': getRandomUserAgent()
-        }
-      });
-    }
-
-    const finalUrl = response.url || url;
-    const xFrameOptions = response.headers.get('x-frame-options');
-    const contentSecurityPolicy = response.headers.get('content-security-policy');
-
-    if (response.body && typeof response.body.destroy === 'function') {
-      response.body.destroy();
-    }
-
-    if (isIframeBlockedByHeaders(xFrameOptions, contentSecurityPolicy)) {
-      return {
-        mode: 'screenshot',
-        url: finalUrl,
-        reason: 'iframe_blocked'
-      };
-    }
-
-    return {
-      mode: 'iframe',
-      url: finalUrl,
-      reason: null
-    };
-  } catch (error) {
-    console.warn('[preview] Failed to inspect iframe support, defaulting to iframe preview', {
-      url,
-      error
-    });
-
-    if (response && response.body && typeof response.body.destroy === 'function') {
-      response.body.destroy();
-    }
-
-    return {
-      mode: 'iframe',
-      url,
-      reason: 'inspection_failed'
-    };
-  }
-}
-
-function isIframeBlockedByHeaders(xFrameOptions, contentSecurityPolicy) {
-  const normalizedXFrameOptions = String(xFrameOptions || '').trim().toLowerCase();
-  if (normalizedXFrameOptions.includes('deny') || normalizedXFrameOptions.includes('sameorigin')) {
-    return true;
-  }
-
-  const frameAncestorsValue = extractFrameAncestorsValue(contentSecurityPolicy);
-  if (!frameAncestorsValue) {
-    return false;
-  }
-
-  const normalizedFrameAncestors = frameAncestorsValue.toLowerCase();
-  if (normalizedFrameAncestors.includes("'none'") || normalizedFrameAncestors.includes("'self'")) {
-    return true;
-  }
-
-  return !normalizedFrameAncestors.includes('*');
-}
-
-function extractFrameAncestorsValue(contentSecurityPolicy) {
-  const policy = String(contentSecurityPolicy || '');
-  const match = policy.match(/frame-ancestors\s+([^;]+)/i);
-  return match ? match[1].trim() : '';
-}
-
-async function capturePreviewScreenshot(url) {
-  await maybeCleanupOldPreviewFiles();
-
-  const cachedPreview = await getCachedPreviewScreenshot(url);
-  if (cachedPreview) {
-    return cachedPreview;
-  }
-
-  const inflightCapture = previewScreenshotInflight.get(url);
-  if (inflightCapture) {
-    return inflightCapture;
-  }
-
-  const capturePromise = (async () => {
-    fs.mkdirSync(PREVIEW_OUTPUT_DIR, { recursive: true });
-
-    const fileName = `preview_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.png`;
-    const outputPath = path.join(PREVIEW_OUTPUT_DIR, fileName);
-    const browser = await getPreviewBrowser();
-    const page = await browser.newPage();
-    const userAgent = getRandomUserAgent();
-
-    try {
-      await page.setViewport(PREVIEW_VIEWPORT);
-      await page.setUserAgent(userAgent);
-      const response = await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: PREVIEW_TIMEOUT_MS
-      });
-      const navigationDetails = await getPuppeteerPageDiagnostics(page, response);
-
-      if (navigationDetails.status && navigationDetails.status >= 400) {
-        console.error('[preview] Non-OK screenshot response', {
-          url,
-          status: navigationDetails.status,
-          statusText: navigationDetails.statusText,
-          responseUrl: navigationDetails.responseUrl,
-          pageUrl: navigationDetails.pageUrl,
-          title: navigationDetails.title,
-          userAgent,
-          headers: navigationDetails.responseHeaders,
-          html: navigationDetails.responseHtml
-        });
-
-        const error = new Error(`Preview HTTP error! Status: ${navigationDetails.status}`);
-        error.details = {
-          url,
-          status: navigationDetails.status,
-          statusText: navigationDetails.statusText,
-          responseUrl: navigationDetails.responseUrl,
-          pageUrl: navigationDetails.pageUrl,
-          title: navigationDetails.title,
-          userAgent,
-          responseHeaders: navigationDetails.responseHeaders,
-          responseHtml: navigationDetails.responseHtml
-        };
-        throw error;
-      }
-
-      await delay(await getPreviewPostNavigationDelayMs());
-      await dismissCookieBanners(page);
-      await page.screenshot({
-        path: outputPath,
-        type: 'png',
-        fullPage: false
-      });
-
-      const createdAt = new Date();
-      const publicPath = getPreviewPublicPath(fileName);
-      await upsertPreviewCacheEntry({
-        url,
-        fileName,
-        filePath: outputPath,
-        publicPath,
-        createdAt
-      });
-
-      console.info('[preview] Screenshot captured', { url, fileName });
-      return publicPath;
-    } catch (error) {
-      const failureDetails = await getPuppeteerPageDiagnostics(page).catch(() => ({}));
-      console.error('[preview] Screenshot capture failed', {
-        url,
-        userAgent,
-        pageUrl: failureDetails.pageUrl || null,
-        title: failureDetails.title || null,
-        html: failureDetails.responseHtml || null,
-        error
-      });
-      throw error;
-    } finally {
-      await page.close().catch(() => null);
-    }
-  })();
-
-  previewScreenshotInflight.set(url, capturePromise);
-
-  try {
-    return await capturePromise;
-  } finally {
-    previewScreenshotInflight.delete(url);
-  }
-}
-
-async function dismissCookieBanners(page) {
-  const frames = page.frames();
-  let clickedBanner = false;
-
-  for (const frame of frames) {
-    const clicked = await dismissCookieBannerInFrame(frame);
-    clickedBanner = clickedBanner || clicked;
-  }
-
-  if (clickedBanner) {
-    await delay(await getPreviewPostBannerDelayMs());
-  }
-
-  for (const frame of page.frames()) {
-    await hideCookieOverlayInFrame(frame);
-  }
-}
-
-async function dismissCookieBannerInFrame(frame) {
-  const selectorGroups = [
-    [
-      '#onetrust-reject-all-handler',
-      '#onetrust-pc-btn-handler',
-      '[data-testid*="reject"]',
-      '[id*="reject"]',
-      '[class*="reject"]'
-    ],
-    [
-      '[data-testid*="necessary"]',
-      '[id*="necessary"]',
-      '[class*="necessary"]',
-      '[aria-label*="necessary"]'
-    ],
-    [
-      '#onetrust-close-btn-container button',
-      '.onetrust-close-btn-handler',
-      '[aria-label="Close"]',
-      '[aria-label="Dismiss"]',
-      '[data-testid*="close"]'
-    ],
-    [
-      '#onetrust-accept-btn-handler',
-      '[data-testid*="accept"]',
-      '[id*="accept"]',
-      '[class*="accept"]'
-    ]
-  ];
-
-  for (const selectors of selectorGroups) {
-    for (const selector of selectors) {
-      try {
-        const handle = await frame.$(selector);
-        if (handle) {
-          await handle.click({ delay: 40 });
-          return true;
-        }
-      } catch (error) {
-        // Try the next selector.
-      }
-    }
-  }
-
-  try {
-    return await frame.evaluate((preferredTexts) => {
-      const normalize = (value) => String(value || '')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .toLowerCase();
-
-      const clickables = Array.from(
-        document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')
-      );
-
-      for (const preferredText of preferredTexts) {
-        const match = clickables.find((element) => {
-          const label = normalize(
-            element.innerText ||
-            element.textContent ||
-            element.value ||
-            element.getAttribute('aria-label')
-          );
-
-          return label && (label === preferredText || label.includes(preferredText));
-        });
-
-        if (match) {
-          match.click();
-          return true;
-        }
-      }
-
-      return false;
-    }, [
-      'reject all',
-      'only necessary',
-      'necessary only',
-      'continue without accepting',
-      'reject',
-      'hafna',
-      'leyfa nauðsynlegar',
-      'bara nauðsynlegar',
-      'close',
-      'dismiss',
-      'loka',
-      'got it',
-      'accept',
-      'accept all',
-      'allow all',
-      'i agree',
-      'agree',
-      'leyfa vafrakökur',
-      'samþykkja vafrakökur',
-      'samþykkja',
-      'leyfa allar'
-    ]);
-  } catch (error) {
-    return false;
-  }
-}
-
-async function hideCookieOverlayInFrame(frame) {
-  try {
-    await frame.evaluate((keywords) => {
-      const normalize = (value) => String(value || '')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .toLowerCase();
-
-      const keywordList = keywords.map((keyword) => keyword.toLowerCase());
-      const elements = Array.from(document.querySelectorAll('body *'));
-
-      for (const element of elements) {
-        const descriptor = normalize([
-          element.id,
-          element.className,
-          element.getAttribute('aria-label'),
-          element.getAttribute('data-testid'),
-          element.getAttribute('role')
-        ].join(' '));
-
-        const style = window.getComputedStyle(element);
-        const isFixed = style.position === 'fixed' || style.position === 'sticky';
-        const coversLargeArea =
-          element.offsetWidth >= window.innerWidth * 0.6 &&
-          element.offsetHeight >= window.innerHeight * 0.15;
-        const keywordMatch = keywordList.some((keyword) => descriptor.includes(keyword));
-
-        if (keywordMatch && isFixed && coversLargeArea) {
-          element.style.setProperty('display', 'none', 'important');
-          element.style.setProperty('visibility', 'hidden', 'important');
-          element.style.setProperty('pointer-events', 'none', 'important');
-        }
-      }
-
-      document.documentElement.style.overflow = 'auto';
-      document.body.style.overflow = 'auto';
-    }, [
-      'cookie',
-      'consent',
-      'gdpr',
-      'privacy',
-      'onetrust',
-      'cookiebot',
-      'trustarc',
-      'quantcast',
-      'usercentrics',
-      'didomi'
-    ]);
-  } catch (error) {
-    // Ignore per-frame cleanup failures.
-  }
-}
-
-async function getCachedPreviewScreenshot(url) {
-  const cachedEntry = await getPreviewCacheEntryByUrl(url);
-  if (!cachedEntry) {
-    return null;
-  }
-
-  const fileExists = cachedEntry.file_path && fs.existsSync(cachedEntry.file_path);
-  if (!fileExists) {
-    await deletePreviewCacheEntry(cachedEntry, {
-      deleteFile: false
-    });
-    return null;
-  }
-
-  if (!cachedEntry.expires_at || cachedEntry.expires_at.getTime() <= Date.now()) {
-    await deletePreviewCacheEntry(cachedEntry);
-    return null;
-  }
-
-  const refreshedEntry = await touchPreviewCacheEntry(cachedEntry);
-  return refreshedEntry ? refreshedEntry.public_path : cachedEntry.public_path;
-}
-
-async function maybeCleanupOldPreviewFiles() {
-  if (Date.now() - lastPreviewCleanupAt < PREVIEW_CLEANUP_INTERVAL_MS) {
-    return;
-  }
-
-  lastPreviewCleanupAt = Date.now();
-  await cleanupOldPreviewFiles();
-}
-
-async function cleanupOldPreviewFiles() {
-  await ensurePreviewCacheTable();
-
-  const summary = {
-    deletedCount: 0,
-    retainedCount: 0,
-    missingFileCount: 0,
-    orphanFileCount: 0,
-    legacyMetadataFilesRemoved: 0
-  };
-
-  const now = Date.now();
-  const result = await query(
-    `SELECT *
-     FROM preview_screenshot_cache
-     ORDER BY created_at ASC`
-  );
-  const cacheEntries = result.rows.map((row) => normalizePreviewCacheRow(row));
-  const referencedFiles = new Set();
-
-  for (const entry of cacheEntries) {
-    const fileExists = entry.file_path && fs.existsSync(entry.file_path);
-    const isExpired = !entry.expires_at || entry.expires_at.getTime() <= now;
-
-    if (!fileExists) {
-      await deletePreviewCacheEntry(entry, {
-        deleteFile: false
-      });
-      summary.missingFileCount += 1;
-      continue;
-    }
-
-    if (isExpired) {
-      await deletePreviewCacheEntry(entry);
-      summary.deletedCount += 1;
-      continue;
-    }
-
-    if (entry.file_path) {
-      referencedFiles.add(entry.file_path);
-    }
-    summary.retainedCount += 1;
-  }
-
-  if (!fs.existsSync(PREVIEW_OUTPUT_DIR)) {
-    return summary;
-  }
-
-  const fileNames = fs.readdirSync(PREVIEW_OUTPUT_DIR);
-  for (const fileName of fileNames) {
-    const absolutePath = path.join(PREVIEW_OUTPUT_DIR, fileName);
-
-    if (fileName.endsWith(`${PREVIEW_IMAGE_EXTENSION}.json`)) {
-      removeLegacyPreviewMetadataFile(absolutePath);
-      summary.legacyMetadataFilesRemoved += 1;
-      continue;
-    }
-
-    if (!fileName.endsWith(PREVIEW_IMAGE_EXTENSION)) {
-      continue;
-    }
-
-    if (referencedFiles.has(absolutePath)) {
-      continue;
-    }
-
-    try {
-      const stats = fs.statSync(absolutePath);
-      if (now - stats.mtimeMs < PREVIEW_ORPHAN_GRACE_MS) {
-        continue;
-      }
-
-      safelyRemovePreviewArtifacts(absolutePath);
-      summary.orphanFileCount += 1;
-    } catch (error) {
-      console.warn('[preview] Failed to inspect orphan preview file', {
-        fileName,
-        error
-      });
-    }
-  }
-
-  return summary;
-}
-
-function delay(durationMs) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, durationMs);
-  });
-}
-
-async function getPreviewBrowser() {
-  if (!previewBrowserPromise) {
-    previewBrowserPromise = puppeteer.launch().then((browser) => {
-      browser.on('disconnected', () => {
-        previewBrowserPromise = null;
-      });
-      return browser;
-    }).catch((error) => {
-      previewBrowserPromise = null;
-      throw error;
-    });
-  }
-
-  return previewBrowserPromise;
-}
-
-async function cleanupStoredPreviewFiles() {
-  lastPreviewCleanupAt = Date.now();
-  const summary = await cleanupOldPreviewFiles();
-  if (
-    Number(summary.deletedCount || 0) > 0 ||
-    Number(summary.missingFileCount || 0) > 0 ||
-    Number(summary.orphanFileCount || 0) > 0 ||
-    Number(summary.legacyMetadataFilesRemoved || 0) > 0
-  ) {
-    console.info('[preview] Stored preview cleanup completed', summary);
-  }
-  return summary;
-}
-
-async function getPreviewCacheSummary() {
-  await maybeCleanupOldPreviewFiles();
-  await ensurePreviewCacheTable();
-
-  const result = await query(
-    `SELECT *
-     FROM preview_screenshot_cache
-     ORDER BY created_at DESC`
-  );
-
-  const screenshotFiles = result.rows
-    .map((row) => normalizePreviewCacheRow(row))
-    .map((entry) => {
-      const fileExists = entry.file_path && fs.existsSync(entry.file_path);
-      let sizeBytes = null;
-
-      if (fileExists) {
-        try {
-          sizeBytes = fs.statSync(entry.file_path).size;
-        } catch (error) {
-          console.warn('[preview] Failed to inspect cached screenshot file', {
-            filePath: entry.file_path,
-            error
-          });
-        }
-      }
-
-      return {
-        id: entry.id,
-        fileName: entry.file_name,
-        publicPath: entry.public_path,
-        absolutePath: entry.file_path,
-        sourceUrl: entry.url,
-        createdAt: entry.created_at,
-        lastAccessedAt: entry.last_accessed_at,
-        estimatedClearAt: entry.expires_at,
-        sizeBytes,
-        fileExists
-      };
-    });
-
-  return {
-    screenshotDirectory: PREVIEW_OUTPUT_DIR,
-    screenshotFiles
-  };
-}
-
-async function getHTML(url) {
-  const target = typeof url === 'string' ? { price_url: url } : url;
-  let attempts = 0;
-  let lastError = null;
-  let finalFailureDetails = null;
-
-  while (attempts < 3) {
-    try {
-      const randomUserAgent = getRandomUserAgent();
-      const settings = {
-        headers: {
-          'User-Agent': randomUserAgent
-        }
-      };
-
-      const response = await fetch(target.price_url, settings);
-
-      if (!response.ok) {
-        const responseHeaders = getResponseHeadersObject(response);
-        const responseHtml = await response.text();
-
-        console.error('[crawler] Non-OK HTML fetch response', {
-          url: target.price_url,
-          status: response.status,
-          statusText: response.statusText || null,
-          responseUrl: response.url || target.price_url,
-          userAgent: randomUserAgent,
-          headers: responseHeaders,
-          html: responseHtml
-        });
-
-        const error = new Error(`HTTP error! Status: ${response.status}`);
-        error.details = {
-          url: target.price_url,
-          status: response.status,
-          statusText: response.statusText || null,
-          responseUrl: response.url || target.price_url,
-          userAgent: randomUserAgent,
-          responseHeaders,
-          responseHtml
-        };
-        finalFailureDetails = {
-          responseHtml,
-          status: response.status,
-          statusText: response.statusText || null,
-          responseUrl: response.url || target.price_url,
-          userAgent: randomUserAgent,
-          responseHeaders
-        };
-        throw error;
-      }
-
-      const html = await response.text();
-
-      if (!html) {
-        throw new Error('Empty HTML content');
-      }
-
-      return html; // Return the successfully fetched HTML
-    } catch (error) {
-      attempts++;
-      lastError = error;
-      console.warn('[crawler] HTML fetch attempt failed', {
-        url: target.price_url,
-        attempt: attempts,
-        error
-      });
-    }
-  }
-
-  let htmlFilePath = null;
-  if (finalFailureDetails && finalFailureDetails.responseHtml && await shouldSaveHtml(getActionName(target), true)) {
-    htmlFilePath = saveHTMLFile(finalFailureDetails.responseHtml, {
-      action: getActionName(target),
-      trackId: target.id,
-      userId: target.user_id,
-      url: target.price_url,
-      suffix: 'fetch-failed'
-    });
-  }
-
-  const failureLogId = await logCrawlerFailure(target, 'fetch-html', lastError, {
-    htmlFilePath,
-    status: finalFailureDetails ? finalFailureDetails.status : null,
-    statusText: finalFailureDetails ? finalFailureDetails.statusText : null,
-    responseUrl: finalFailureDetails ? finalFailureDetails.responseUrl : null,
-    userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null,
-    responseHeaders: finalFailureDetails ? finalFailureDetails.responseHeaders : null,
-    responseHtml: finalFailureDetails ? finalFailureDetails.responseHtml : null
-  });
-  const finalError = new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
-  finalError.details = {
-    ...(lastError && lastError.details ? lastError.details : {}),
-    failureLogId,
-    stage: 'fetch-html'
-  };
-  throw finalError;
-}
-
-function getResponseHeadersObject(response) {
-  const headers = {};
-
-  if (!response || !response.headers || typeof response.headers.forEach !== 'function') {
-    return headers;
-  }
-
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-
-  return headers;
-}
-
-function getPuppeteerResponseDetails(response) {
-  if (!response) {
-    return {
-      status: null,
-      statusText: null,
-      responseUrl: null,
-      responseHeaders: null
-    };
-  }
-
-  return {
-    status: typeof response.status === 'function' ? response.status() : null,
-    statusText: typeof response.statusText === 'function' ? response.statusText() : null,
-    responseUrl: typeof response.url === 'function' ? response.url() : null,
-    responseHeaders: typeof response.headers === 'function' ? response.headers() : null
-  };
-}
-
-async function getPuppeteerPageDiagnostics(page, response = null) {
-  const responseDetails = getPuppeteerResponseDetails(response);
-  let pageUrl = null;
-  let title = null;
-  let responseHtml = null;
-
-  try {
-    pageUrl = page.url();
-  } catch (error) {
-    pageUrl = null;
-  }
-
-  try {
-    title = await page.title();
-  } catch (error) {
-    title = null;
-  }
-
-  try {
-    responseHtml = await page.content();
-  } catch (error) {
-    responseHtml = null;
-  }
-
-  return {
-    ...responseDetails,
-    pageUrl,
-    title,
-    responseHtml
-  };
-}
-
-async function getRenderedHTML(url) {
-  const target = typeof url === 'string' ? { price_url: url } : url;
-  // Launch a headless browser
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
-  
-  let attempts = 0;
-  let lastError = null;
-  let finalFailureDetails = null;
-
-  try {
-    while (attempts < 3) {
-      const randomUserAgent = getRandomUserAgent();
-
-      try {
-        // Set user agent
-        await page.setUserAgent(randomUserAgent);
-
-        // Navigate to the page
-        const response = await page.goto(target.price_url, {
-            waitUntil: 'networkidle2', // Wait until all network requests are finished
-        });
-        const navigationDetails = await getPuppeteerPageDiagnostics(page, response);
-
-        if (navigationDetails.status && navigationDetails.status >= 400) {
-          console.error('[crawler] Non-OK rendered HTML response', {
-            url: target.price_url,
-            status: navigationDetails.status,
-            statusText: navigationDetails.statusText,
-            responseUrl: navigationDetails.responseUrl,
-            pageUrl: navigationDetails.pageUrl,
-            title: navigationDetails.title,
-            userAgent: randomUserAgent,
-            headers: navigationDetails.responseHeaders,
-            html: navigationDetails.responseHtml
-          });
-
-          const error = new Error(`Rendered HTTP error! Status: ${navigationDetails.status}`);
-          error.details = {
-            url: target.price_url,
-            status: navigationDetails.status,
-            statusText: navigationDetails.statusText,
-            responseUrl: navigationDetails.responseUrl,
-            pageUrl: navigationDetails.pageUrl,
-            title: navigationDetails.title,
-            userAgent: randomUserAgent,
-            responseHeaders: navigationDetails.responseHeaders,
-            responseHtml: navigationDetails.responseHtml
-          };
-          finalFailureDetails = {
-            status: navigationDetails.status,
-            statusText: navigationDetails.statusText,
-            responseUrl: navigationDetails.responseUrl,
-            pageUrl: navigationDetails.pageUrl,
-            title: navigationDetails.title,
-            userAgent: randomUserAgent,
-            responseHeaders: navigationDetails.responseHeaders,
-            responseHtml: navigationDetails.responseHtml
-          };
-          throw error;
-        }
-      
-        // Extract the fully rendered HTML
-        const html = navigationDetails.responseHtml || await page.content();
-
-        if (!html) {
-          throw new Error('Empty HTML content');
-        }
-
-        return html;
-      } catch (error) {
-        attempts++;
-        lastError = error;
-        if (!finalFailureDetails) {
-          const failureDetails = await getPuppeteerPageDiagnostics(page).catch(() => ({}));
-          finalFailureDetails = {
-            status: error && error.details ? error.details.status || null : null,
-            statusText: error && error.details ? error.details.statusText || null : null,
-            responseUrl: error && error.details ? error.details.responseUrl || null : null,
-            pageUrl: failureDetails.pageUrl || null,
-            title: failureDetails.title || null,
-            userAgent: randomUserAgent,
-            responseHeaders: error && error.details ? error.details.responseHeaders || null : null,
-            responseHtml: error && error.details && error.details.responseHtml
-              ? error.details.responseHtml
-              : failureDetails.responseHtml || null
-          };
-        }
-        console.warn('[crawler] Rendered HTML fetch attempt failed', {
-          url: target.price_url,
-          attempt: attempts,
-          error
-        });
-      }
-    }
-
-    const failureLogId = await logCrawlerFailure(target, 'render-html', lastError, {
-      status: finalFailureDetails ? finalFailureDetails.status : null,
-      statusText: finalFailureDetails ? finalFailureDetails.statusText : null,
-      responseUrl: finalFailureDetails ? finalFailureDetails.responseUrl : null,
-      pageUrl: finalFailureDetails ? finalFailureDetails.pageUrl : null,
-      title: finalFailureDetails ? finalFailureDetails.title : null,
-      userAgent: finalFailureDetails ? finalFailureDetails.userAgent : null,
-      responseHeaders: finalFailureDetails ? finalFailureDetails.responseHeaders : null,
-      responseHtml: finalFailureDetails ? finalFailureDetails.responseHtml : null
-    });
-    if (lastError && lastError.details) {
-      lastError.details.failureLogId = failureLogId;
-      lastError.details.stage = 'render-html';
-    } else if (lastError) {
-      lastError.details = {
-        failureLogId,
-        stage: 'render-html'
-      };
-    }
-    const finalError = new Error(`Failed to fetch HTML after 3 attempts: ${lastError.message}`);
-    finalError.details = {
-      ...(lastError && lastError.details ? lastError.details : {}),
-      failureLogId,
-      stage: 'render-html'
-    };
-    throw finalError;
-  } finally {
-    await browser.close();
-  }
-}
-
-function saveHTMLFile(html, metadata) {
-  const fileName = buildHtmlFilePath(metadata);
-  fs.mkdirSync(path.dirname(fileName), { recursive: true });
-  fs.writeFile(fileName, html, function(err) {
-    if (err) {
-      console.error('[crawler] Failed to save HTML file', {
-        fileName,
-        action: metadata.action,
-        trackId: metadata.trackId || null,
-        error: err
-      });
-      return;
-    }
-    console.info('[crawler] HTML file saved', {
-      fileName,
-      action: metadata.action,
-      trackId: metadata.trackId || null
-    });
-  });
-  return fileName;
 }
 
 async function findPriceFromDiv(html, track) {
@@ -1659,7 +347,7 @@ async function findPriceFromDiv(html, track) {
   if (!matches || !matches[1] || matches[1].length >= 500) { 
     let htmlFilePath = null;
     if (await shouldSaveHtml('update', true)) {
-      htmlFilePath = saveHTMLFile(html, {
+      htmlFilePath = await saveHTMLFile(html, {
         action: 'update',
         trackId: track.id,
         userId: track.user_id,
@@ -1701,7 +389,7 @@ async function findPriceFromDiv(html, track) {
   } else {
     let htmlFilePath = null;
     if (await shouldSaveHtml('update', true)) {
-      htmlFilePath = saveHTMLFile(html, {
+      htmlFilePath = await saveHTMLFile(html, {
         action: 'update',
         trackId: track.id,
         userId: track.user_id,
@@ -1763,7 +451,7 @@ async function handleMatchedPrice(match, track) {
     // Update track object with new price before sending email
     const previousPrice = track.curr_price;
     track.curr_price = match;
-    const emailDurationMs = await sendPriceUpdateEmail(track, {
+    const emailDurationMs = await queuePriceUpdateEmail(track, {
       previousPrice
     });
     return {
@@ -2066,7 +754,25 @@ function buildNextDataPriceDiv(scriptContent, price) {
   return escapedSnippet.trim();
 }
 
-function createTrackFromMatch({ trackRequest, fullyRenderHTML, matchedPrice, priceDiv, title }) {
+function buildSelectorTemplateKey(selectorType, fullyRenderHTML) {
+  if (!selectorType) {
+    return null;
+  }
+
+  return `${selectorType}:${fullyRenderHTML ? 'js' : 'html'}`;
+}
+
+function createTrackFromMatch({
+  trackRequest,
+  fullyRenderHTML,
+  matchedPrice,
+  priceDiv,
+  title,
+  displayPriceText = null,
+  selectorType = null,
+  selectorValue = priceDiv,
+  selectorTemplateKey = null
+}) {
   return {
     orig_price: matchedPrice,
     curr_price: matchedPrice,
@@ -2077,9 +783,426 @@ function createTrackFromMatch({ trackRequest, fullyRenderHTML, matchedPrice, pri
     user_id: trackRequest.user_id,
     email: trackRequest.email,
     active: true,
+    display_price_text: displayPriceText ? String(displayPriceText).trim() : null,
+    selector_type: selectorType || null,
+    selector_value: selectorType ? (selectorValue || '') : '',
+    selector_template_key: selectorType
+      ? (selectorTemplateKey || buildSelectorTemplateKey(selectorType, fullyRenderHTML))
+      : null,
     created_at: new Date(),
     last_modified_at: new Date()
   };
+}
+
+function escapeCssIdentifier(value) {
+  return String(value || '').replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `);
+}
+
+function normalizeElementText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isStableDomToken(token) {
+  const value = String(token || '').trim();
+  if (!value || value.length > 48) {
+    return false;
+  }
+
+  if (!/[a-zA-Z]/.test(value)) {
+    return false;
+  }
+
+  if (/^css-[a-z0-9_-]{4,}$/i.test(value)) {
+    return false;
+  }
+
+  if (/^[a-f0-9]{8,}$/i.test(value)) {
+    return false;
+  }
+
+  if (/\d{5,}/.test(value)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getStableClassNames(element) {
+  if (!element || !element.classList) {
+    return [];
+  }
+
+  return Array.from(element.classList).filter(isStableDomToken);
+}
+
+function getStableElementId(element) {
+  if (!element || !isStableDomToken(element.id)) {
+    return null;
+  }
+
+  return element.id;
+}
+
+function isUniqueDomSelector(document, selector, expectedElement) {
+  if (!selector) {
+    return false;
+  }
+
+  try {
+    const matches = document.querySelectorAll(selector);
+    return matches.length === 1 && matches[0] === expectedElement;
+  } catch (error) {
+    return false;
+  }
+}
+
+function buildReusableDomSelector(element, document) {
+  if (!element || !document) {
+    return null;
+  }
+
+  const candidateKeys = new Set();
+  const candidates = [];
+  const tagName = String(element.tagName || '').toLowerCase();
+  const elementClassNames = getStableClassNames(element);
+  const elementId = getStableElementId(element);
+
+  function addCandidate(type, value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      return;
+    }
+
+    const candidateKey = `${type}:${normalizedValue}`;
+    if (candidateKeys.has(candidateKey)) {
+      return;
+    }
+
+    candidateKeys.add(candidateKey);
+    candidates.push({ selectorType: type, selectorValue: normalizedValue });
+  }
+
+  for (const className of elementClassNames) {
+    addCandidate(DOMAIN_PRICE_SELECTOR_TYPES.CSS, `.${escapeCssIdentifier(className)}`);
+  }
+
+  if (elementClassNames.length > 1) {
+    addCandidate(
+      DOMAIN_PRICE_SELECTOR_TYPES.CSS,
+      elementClassNames.map((className) => `.${escapeCssIdentifier(className)}`).join('')
+    );
+  }
+
+  let ancestor = element.parentElement;
+  let depth = 0;
+  while (ancestor && depth < 3) {
+    const ancestorClassNames = getStableClassNames(ancestor);
+    const ancestorId = getStableElementId(ancestor);
+    const ancestorSelectors = [];
+
+    if (ancestorId) {
+      ancestorSelectors.push(`#${escapeCssIdentifier(ancestorId)}`);
+    }
+
+    for (const className of ancestorClassNames) {
+      ancestorSelectors.push(`.${escapeCssIdentifier(className)}`);
+    }
+
+    if (ancestorClassNames.length > 1) {
+      ancestorSelectors.push(
+        ancestorClassNames.map((className) => `.${escapeCssIdentifier(className)}`).join('')
+      );
+    }
+
+    for (const ancestorSelector of ancestorSelectors) {
+      for (const className of elementClassNames) {
+        addCandidate(
+          DOMAIN_PRICE_SELECTOR_TYPES.CSS,
+          `${ancestorSelector} .${escapeCssIdentifier(className)}`
+        );
+      }
+
+      if (elementClassNames.length > 1) {
+        addCandidate(
+          DOMAIN_PRICE_SELECTOR_TYPES.CSS,
+          `${ancestorSelector} ${elementClassNames.map((className) => `.${escapeCssIdentifier(className)}`).join('')}`
+        );
+      }
+
+      if (tagName) {
+        addCandidate(DOMAIN_PRICE_SELECTOR_TYPES.CSS, `${ancestorSelector} ${tagName}`);
+      }
+    }
+
+    ancestor = ancestor.parentElement;
+    depth += 1;
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.selectorType === DOMAIN_PRICE_SELECTOR_TYPES.CSS
+      && isUniqueDomSelector(document, candidate.selectorValue, element)) {
+      return candidate;
+    }
+  }
+
+  if (elementId && isUniqueDomSelector(document, `#${escapeCssIdentifier(elementId)}`, element)) {
+    return {
+      selectorType: DOMAIN_PRICE_SELECTOR_TYPES.HTML_ID,
+      selectorValue: elementId
+    };
+  }
+
+  return null;
+}
+
+function getElementTextCandidates(element) {
+  if (!element) {
+    return [];
+  }
+
+  const directTextRaw = Array.from(element.childNodes || [])
+    .filter((node) => node.nodeType === 3)
+    .map((node) => node.textContent || '')
+    .join(' ');
+  const fullTextRaw = element.textContent || '';
+  const directText = normalizeElementText(directTextRaw);
+  const fullText = normalizeElementText(fullTextRaw);
+  const candidates = [];
+
+  if (directText) {
+    candidates.push({
+      rawText: directTextRaw,
+      normalizedText: directText,
+      isDirectTextMatch: true
+    });
+  }
+
+  if (fullText && fullText !== directText) {
+    candidates.push({
+      rawText: fullTextRaw,
+      normalizedText: fullText,
+      isDirectTextMatch: false
+    });
+  }
+
+  return candidates;
+}
+
+function getMatchedPriceFromElement(element, expectedPrice = null) {
+  for (const candidate of getElementTextCandidates(element)) {
+    const matchedPrice = extractNumber(candidate.normalizedText);
+    if (!isValidMatchedPrice(matchedPrice)) {
+      continue;
+    }
+
+    if (expectedPrice != null && !arePricesEqual(matchedPrice, expectedPrice)) {
+      continue;
+    }
+
+    return {
+      matchedPrice,
+      matchedText: candidate.normalizedText,
+      matchedTextRaw: candidate.rawText,
+      isDirectTextMatch: candidate.isDirectTextMatch
+    };
+  }
+
+  return null;
+}
+
+function findBestPriceElement(document, expectedPrice) {
+  if (!document) {
+    return null;
+  }
+
+  let bestMatch = null;
+
+  for (const element of Array.from(document.querySelectorAll('*'))) {
+    const tagName = String(element.tagName || '').toLowerCase();
+    if (['html', 'head', 'body', 'script', 'style', 'noscript'].includes(tagName)) {
+      continue;
+    }
+
+    const match = getMatchedPriceFromElement(element, expectedPrice);
+    if (!match) {
+      continue;
+    }
+
+    const reusableSelector = buildReusableDomSelector(element, document);
+    const textLength = match.matchedText.length;
+    const score = (reusableSelector ? 1000 : 0)
+      + (match.isDirectTextMatch ? 500 : 0)
+      - Math.min(textLength, 400)
+      - (element.children ? element.children.length * 5 : 0);
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        element,
+        matchedPrice: match.matchedPrice,
+        matchedText: match.matchedText,
+        matchedTextRaw: match.matchedTextRaw,
+        reusableSelector,
+        score
+      };
+    }
+  }
+
+  return bestMatch;
+}
+
+function resolvePriceFromDomSelector(document, selector) {
+  if (!document || !selector || !selector.selector_type) {
+    return null;
+  }
+
+  let element = null;
+
+  if (selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.CSS) {
+    let matches;
+    try {
+      matches = document.querySelectorAll(selector.selector_value || '');
+    } catch (error) {
+      return null;
+    }
+
+    if (!matches || matches.length !== 1) {
+      return null;
+    }
+
+    element = matches[0];
+  } else if (selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.HTML_ID) {
+    const elementId = String(selector.selector_value || '').replace(/^#/, '');
+    element = document.getElementById(elementId);
+  } else {
+    return null;
+  }
+
+  if (!element) {
+    return null;
+  }
+
+  const match = getMatchedPriceFromElement(element);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    element,
+    matchedPrice: match.matchedPrice,
+    matchedText: match.matchedText,
+    matchedTextRaw: match.matchedTextRaw
+  };
+}
+
+function findPriceTextLocationInHtml(html, matchedText, rawMatchedText = '') {
+  const searchCandidates = [
+    String(rawMatchedText || ''),
+    String(matchedText || ''),
+    normalizeElementText(rawMatchedText || '')
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  for (const candidateText of searchCandidates) {
+    let location = html.indexOf(candidateText);
+    if (location !== -1) {
+      return {
+        location,
+        matchedText: candidateText
+      };
+    }
+
+    const nbspCandidate = candidateText.replace(/\s+/g, '&nbsp;').replace(/kr\./g, '');
+    location = html.indexOf(nbspCandidate);
+    if (location !== -1) {
+      return {
+        location,
+        matchedText: nbspCandidate
+      };
+    }
+  }
+
+  return {
+    location: -1,
+    matchedText
+  };
+}
+
+function extractCandidateFromSelector({ trackRequest, selector, document, html, fullyRenderHTML, title }) {
+  if (!selector || !selector.selector_type) {
+    return null;
+  }
+
+  if (selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.JSON_LD) {
+    const jsonLdProduct = extractProductDataFromJsonLd(html);
+    if (!jsonLdProduct || !isValidMatchedPrice(jsonLdProduct.price)) {
+      return null;
+    }
+
+    return createTrackFromMatch({
+      trackRequest,
+      fullyRenderHTML,
+      matchedPrice: jsonLdProduct.price,
+      priceDiv: jsonLdProduct.priceDiv,
+      title: jsonLdProduct.name || title,
+      selectorType: DOMAIN_PRICE_SELECTOR_TYPES.JSON_LD,
+      selectorValue: selector.selector_value || 'Product.offers.price',
+      selectorTemplateKey: selector.template_key
+    });
+  }
+
+  if (selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.NEXT_DATA) {
+    const nextDataProduct = extractProductDataFromNextData(html);
+    if (!nextDataProduct || !isValidMatchedPrice(nextDataProduct.price)) {
+      return null;
+    }
+
+    return createTrackFromMatch({
+      trackRequest,
+      fullyRenderHTML,
+      matchedPrice: nextDataProduct.price,
+      priceDiv: `${NEXT_DATA_PRICE_DIV_PREFIX}${nextDataProduct.priceDiv}`,
+      title: nextDataProduct.name || title,
+      selectorType: DOMAIN_PRICE_SELECTOR_TYPES.NEXT_DATA,
+      selectorValue: selector.selector_value || 'props.pageProps.product.price',
+      selectorTemplateKey: selector.template_key
+    });
+  }
+
+  if (
+    selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.CSS
+    || selector.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.HTML_ID
+  ) {
+    const resolvedMatch = resolvePriceFromDomSelector(document, selector);
+    if (!resolvedMatch || !isValidMatchedPrice(resolvedMatch.matchedPrice)) {
+      return null;
+    }
+
+    const matchLocation = findPriceTextLocationInHtml(
+      html,
+      resolvedMatch.matchedText,
+      resolvedMatch.matchedTextRaw
+    );
+    if (matchLocation.location === -1) {
+      return null;
+    }
+
+    const priceDiv = buildPriceDivFromHtmlMatch(html, matchLocation.location, matchLocation.matchedText);
+
+    return createTrackFromMatch({
+      trackRequest,
+      fullyRenderHTML,
+      matchedPrice: resolvedMatch.matchedPrice,
+      priceDiv,
+      title,
+      displayPriceText: resolvedMatch.matchedTextRaw || resolvedMatch.matchedText,
+      selectorType: selector.selector_type,
+      selectorValue: selector.selector_value || '',
+      selectorTemplateKey: selector.template_key
+    });
+  }
+
+  return null;
 }
 
 
@@ -2126,7 +1249,7 @@ async function setTrackAsInactive(track) {
     return 0;
   }
 
-  return sendTrackInactiveEmail(track);
+  return queueTrackInactiveEmail(track);
 }
 
 async function setTrackAsActive(track, options = {}) {
@@ -2183,7 +1306,7 @@ async function findTrackCandidates(trackRequest, options = {}) {
     lastHtml = await getTrackCandidateHtml(trackRequest, fullyRenderHTML);
 
     if (await shouldSaveHtml('create-track', false)) {
-      saveHTMLFile(lastHtml, {
+      await saveHTMLFile(lastHtml, {
         action: 'create-track',
         trackId: null,
         userId: trackRequest.user_id,
@@ -2212,7 +1335,7 @@ async function findTrackCandidates(trackRequest, options = {}) {
 
   let htmlFilePath = null;
   if (lastHtml && await shouldSaveHtml('create-track', true)) {
-    htmlFilePath = saveHTMLFile(lastHtml, {
+    htmlFilePath = await saveHTMLFile(lastHtml, {
       action: 'create-track',
       trackId: null,
       userId: trackRequest.user_id,
@@ -2241,6 +1364,78 @@ async function findTrackCandidates(trackRequest, options = {}) {
   };
 }
 
+async function detectTrackByUrl(trackRequest) {
+  await ensureDomainPriceSelectorTable();
+
+  const selectors = await getDomainPriceSelectorsByUrl(trackRequest.price_url);
+  if (!selectors || selectors.length === 0) {
+    return {
+      success: false,
+      reason: 'no_selector'
+    };
+  }
+
+  return detectTrackBySelectors(trackRequest, selectors);
+}
+
+async function detectTrackBySelectors(trackRequest, selectors) {
+  for (const selector of selectors) {
+    try {
+      const fullyRenderHTML = Boolean(selector.requires_javascript);
+      const html = fullyRenderHTML
+        ? await fetchRenderedHtml({
+          ...trackRequest,
+          action: 'detect-track',
+          requires_javascript: true
+        }, getHtmlFetchOptions())
+        : await fetchHtmlDirect({
+          ...trackRequest,
+          action: 'detect-track',
+          requires_javascript: false
+        }, getHtmlFetchOptions());
+
+      const dom = new JSDOM(html);
+      const document = dom.window.document;
+      const title = document.querySelector('title')
+        ? document.querySelector('title').textContent || ''
+        : '';
+      const track = extractCandidateFromSelector({
+        trackRequest,
+        selector,
+        document,
+        html,
+        fullyRenderHTML,
+        title
+      });
+
+      if (!track) {
+        await markDomainPriceSelectorFailure(selector.id);
+        continue;
+      }
+
+      await markDomainPriceSelectorSuccess(selector.id);
+      return {
+        success: true,
+        selector,
+        track
+      };
+    } catch (error) {
+      console.warn('[crawler] Stored selector detection failed', {
+        url: trackRequest.price_url,
+        selectorId: selector.id,
+        selectorType: selector.selector_type,
+        error
+      });
+      await markDomainPriceSelectorFailure(selector.id).catch(() => null);
+    }
+  }
+
+  return {
+    success: false,
+    reason: 'selector_failed'
+  };
+}
+
 function buildTrackCandidateAttemptModes(preferredCrawlerMode) {
   const defaultModes = [
     DOMAIN_PROFILE_CRAWLER_MODES.DIRECT_HTML,
@@ -2259,18 +1454,18 @@ function buildTrackCandidateAttemptModes(preferredCrawlerMode) {
 
 async function getTrackCandidateHtml(trackRequest, fullyRenderHTML) {
   if (fullyRenderHTML) {
-    return getRenderedHTML({
+    return fetchRenderedHtml({
       ...trackRequest,
       action: 'create-track',
       requires_javascript: true
-    });
+    }, getHtmlFetchOptions());
   }
 
-  return getHTML({
+  return fetchHtmlDirect({
     ...trackRequest,
     action: 'create-track',
     requires_javascript: false
-  });
+  }, getHtmlFetchOptions());
 }
 
 function findTrackMatchesInHtml(trackRequest, fullyRenderHTML, html, options = {}) {
@@ -2346,7 +1541,9 @@ function findTrackMatchesByDivStructure({ trackRequest, fullyRenderHTML, html, t
           fullyRenderHTML,
           matchedPrice: jsonLdProduct.price,
           priceDiv: jsonLdProduct.priceDiv,
-          title: jsonLdProduct.name || title
+          title: jsonLdProduct.name || title,
+          selectorType: DOMAIN_PRICE_SELECTOR_TYPES.JSON_LD,
+          selectorValue: 'Product.offers.price'
         })
       ],
       title,
@@ -2367,7 +1564,9 @@ function findTrackMatchesByDivStructure({ trackRequest, fullyRenderHTML, html, t
           fullyRenderHTML,
           matchedPrice: nextDataProduct.price,
           priceDiv: `${NEXT_DATA_PRICE_DIV_PREFIX}${nextDataProduct.priceDiv}`,
-          title: nextDataProduct.name || title
+          title: nextDataProduct.name || title,
+          selectorType: DOMAIN_PRICE_SELECTOR_TYPES.NEXT_DATA,
+          selectorValue: 'props.pageProps.product.price'
         })
       ],
       title,
@@ -2375,65 +1574,65 @@ function findTrackMatchesByDivStructure({ trackRequest, fullyRenderHTML, html, t
     };
   }
 
-  const elements = Array.from(document.querySelectorAll('*')).map((element) => element.textContent);
-  let htmlStringPos = 0;
+  const priceElementMatch = findBestPriceElement(document, trackRequest.orig_price);
 
   console.info('[crawler] Looking for original price on page using div structure', {
     url: trackRequest.price_url,
     price: trackRequest.orig_price,
-    elementCount: elements.length,
+    elementCount: document.querySelectorAll('*').length,
     fullyRenderHTML
   });
 
-  for (let i = 0; i < elements.length; i++) {
-    let htmlPrice = elements[i] || '';
-    const htmlPriceClean = extractNumber(htmlPrice);
-
-    if (!arePricesEqual(htmlPriceClean, trackRequest.orig_price)) {
-      continue;
-    }
-
-    let htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
-    if (htmlPriceLocation === -1) {
-      htmlPrice = htmlPrice.replace(/\s+/g, '&nbsp;');
-      htmlPrice = htmlPrice.replace(/kr./g, '');
-      htmlPriceLocation = html.indexOf(htmlPrice, htmlStringPos);
-    }
-
-    if (htmlPriceLocation === -1) {
-      console.warn('[crawler] Matching price text found but location lookup failed', {
-        url: trackRequest.price_url,
-        candidatePrice: htmlPrice
-      });
-      continue;
-    }
-
-    htmlStringPos = htmlPriceLocation;
-    const priceDiv = buildPriceDivFromHtmlMatch(html, htmlPriceLocation, htmlPrice);
-
+  if (!priceElementMatch) {
     return {
-      tracks: [
-        createTrackFromMatch({
-          trackRequest,
-          fullyRenderHTML,
-          matchedPrice: htmlPriceClean,
-          priceDiv,
-          title
-        })
-      ],
+      tracks: [],
       title,
-      priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE
+      priceLookupMode: null
     };
   }
 
+  const matchLocation = findPriceTextLocationInHtml(
+    html,
+    priceElementMatch.matchedText,
+    priceElementMatch.matchedTextRaw
+  );
+  if (matchLocation.location === -1) {
+    console.warn('[crawler] Matching price text found but location lookup failed', {
+      url: trackRequest.price_url,
+      candidatePrice: priceElementMatch.matchedText
+    });
+    return {
+      tracks: [],
+      title,
+      priceLookupMode: null
+    };
+  }
+
+  const priceDiv = buildPriceDivFromHtmlMatch(html, matchLocation.location, matchLocation.matchedText);
+
   return {
-    tracks: [],
+    tracks: [
+      createTrackFromMatch({
+        trackRequest,
+        fullyRenderHTML,
+        matchedPrice: priceElementMatch.matchedPrice,
+        priceDiv,
+        title,
+        displayPriceText: priceElementMatch.matchedTextRaw || priceElementMatch.matchedText,
+        selectorType: priceElementMatch.reusableSelector
+          ? priceElementMatch.reusableSelector.selectorType
+          : null,
+        selectorValue: priceElementMatch.reusableSelector
+          ? priceElementMatch.reusableSelector.selectorValue
+          : ''
+      })
+    ],
     title,
-    priceLookupMode: null
+    priceLookupMode: DOMAIN_PROFILE_PRICE_LOOKUP_MODES.DIV_STRUCTURE
   };
 }
 
-function findTrackMatchesByStringMatch({ trackRequest, fullyRenderHTML, html, title }) {
+function findTrackMatchesByStringMatch({ trackRequest, fullyRenderHTML, html, title, document }) {
   const candidatePattern = /(^|[^\d])([\d][\d\s.,]{0,30}\d|\d)(?!\d)/g;
   let match;
 
@@ -2454,6 +1653,7 @@ function findTrackMatchesByStringMatch({ trackRequest, fullyRenderHTML, html, ti
     const matchOffset = match[0].indexOf(matchedPriceText);
     const matchIndex = match.index + (matchOffset >= 0 ? matchOffset : 0);
     const priceDiv = buildPriceDivFromHtmlMatch(html, matchIndex, matchedPriceText);
+    const priceElementMatch = findBestPriceElement(document, matchedPrice);
 
     return {
       tracks: [
@@ -2462,7 +1662,16 @@ function findTrackMatchesByStringMatch({ trackRequest, fullyRenderHTML, html, ti
           fullyRenderHTML,
           matchedPrice,
           priceDiv,
-          title
+          title,
+          displayPriceText: priceElementMatch
+            ? (priceElementMatch.matchedTextRaw || priceElementMatch.matchedText)
+            : matchedPriceText,
+          selectorType: priceElementMatch && priceElementMatch.reusableSelector
+            ? priceElementMatch.reusableSelector.selectorType
+            : null,
+          selectorValue: priceElementMatch && priceElementMatch.reusableSelector
+            ? priceElementMatch.reusableSelector.selectorValue
+            : ''
         })
       ],
       title,
@@ -2563,6 +1772,8 @@ async function resetInactiveTrackWithCurrentPrice(existingTrack, currentPrice) {
     });
   }
 
+  await learnSelectorAndReactivate(resetTrack, existingTrack.id);
+
   return {
     success: true,
     track: updatedTrack,
@@ -2601,6 +1812,137 @@ async function addFailedTrackLog(trackRequest) {
   }
 }
 
+async function learnSelectorAndReactivate(track, sourceTrackId) {
+  if (!track || !track.selector_type) {
+    return null;
+  }
+
+  const selectorRecord = await upsertDomainPriceSelector({
+    url: track.price_url,
+    templateKey: track.selector_template_key || buildSelectorTemplateKey(track.selector_type, track.requires_javascript),
+    selectorType: track.selector_type,
+    selectorValue: track.selector_value || track.price_div || '',
+    requiresJavascript: Boolean(track.requires_javascript),
+    sourceTrackId
+  });
+
+  if (!selectorRecord) {
+    return null;
+  }
+
+  await reactivateInactiveTracksForSelector(track, selectorRecord, {
+    sourceTrackId
+  });
+
+  return selectorRecord;
+}
+
+function trackCanUseLearnedSelector(track, selectorRecord) {
+  if (!track || !selectorRecord) {
+    return false;
+  }
+
+  if (Boolean(track.requires_javascript) !== Boolean(selectorRecord.requires_javascript)) {
+    return false;
+  }
+
+  if (selectorRecord.selector_type === DOMAIN_PRICE_SELECTOR_TYPES.NEXT_DATA) {
+    return trackUsesNextDataPriceDiv(track);
+  }
+
+  return true;
+}
+
+async function reactivateInactiveTracksForSelector(track, selectorRecord, options = {}) {
+  const domain = extractDomainFromUrl(track && track.price_url);
+  if (!domain || !selectorRecord) {
+    return 0;
+  }
+
+  const result = await query(
+    `SELECT *
+     FROM track
+     WHERE active = FALSE
+       AND deleted = FALSE
+       AND id <> COALESCE($2, -1)
+       AND requires_javascript = $3
+       AND REPLACE(LOWER(split_part(split_part(price_url, '://', 2), '/', 1)), 'www.', '') = $1
+     ORDER BY COALESCE(last_modified_at, created_at) DESC NULLS LAST, id DESC`,
+    [domain, options.sourceTrackId || null, Boolean(selectorRecord.requires_javascript)]
+  );
+
+  let reactivatedCount = 0;
+
+  for (const inactiveTrack of result.rows) {
+    if (!trackCanUseLearnedSelector(inactiveTrack, selectorRecord)) {
+      continue;
+    }
+
+    const detectionResult = await detectTrackBySelectors({
+      price_url: inactiveTrack.price_url,
+      user_id: inactiveTrack.user_id,
+      email: inactiveTrack.email
+    }, [selectorRecord]);
+
+    if (!detectionResult || !detectionResult.success || !detectionResult.track) {
+      continue;
+    }
+
+    const detectedTrack = detectionResult.track;
+    detectedTrack.product_name = (detectedTrack.product_name || inactiveTrack.product_name || '').substring(0, 63);
+    const updatedAt = new Date();
+    const updateResult = await query(
+      `UPDATE track
+       SET curr_price = $1,
+           requires_javascript = $2,
+           price_div = $3,
+           product_name = $4,
+           active = TRUE,
+           last_modified_at = $5
+       WHERE id = $6
+       RETURNING *`,
+      [
+        detectedTrack.curr_price,
+        detectedTrack.requires_javascript,
+        detectedTrack.price_div,
+        detectedTrack.product_name,
+        updatedAt,
+        inactiveTrack.id
+      ]
+    );
+
+    if (!updateResult.rows[0]) {
+      continue;
+    }
+
+    if (
+      Number(inactiveTrack.curr_price) !== Number(detectedTrack.curr_price) ||
+      !Boolean(inactiveTrack.active)
+    ) {
+      await insertTrackHistoryEntry({
+        trackId: inactiveTrack.id,
+        priceBefore: inactiveTrack.curr_price,
+        priceAfter: detectedTrack.curr_price,
+        active: true,
+        changedAt: updatedAt
+      });
+    }
+
+    reactivatedCount += 1;
+  }
+
+  if (reactivatedCount > 0) {
+    console.info('[crawler] Inactive tracks reactivated from learned selector', {
+      domain,
+      selectorId: selectorRecord.id,
+      selectorType: selectorRecord.selector_type,
+      reactivatedCount
+    });
+  }
+
+  return reactivatedCount;
+}
+
 
 async function addTracksToDatabase(tracks, res) {
   await ensureTrackSoftDeleteColumn();
@@ -2634,6 +1976,7 @@ async function addTracksToDatabase(tracks, res) {
       existingTrackCount += 1;
       const updateResult = await updateExistingTrack(existingTrack, track);
       if (updateResult.rows[0] && updateResult.rows[0].id) {
+        await learnSelectorAndReactivate(track, existingTrack.id);
         if (
           Number(existingTrack.curr_price) !== Number(track.curr_price) ||
           Boolean(existingTrack.active) !== Boolean(track.active)
@@ -2653,6 +1996,7 @@ async function addTracksToDatabase(tracks, res) {
           [ track.orig_price, track.curr_price, track.requires_javascript, track.price_url, track.price_div, track.product_name, track.user_id, track.email, track.active, track.created_at, track.last_modified_at ]
         );
         if (insertResult.rows[0].id) {
+          await learnSelectorAndReactivate(track, insertResult.rows[0].id);
           await insertTrackHistoryEntry({
             trackId: insertResult.rows[0].id,
             priceBefore: null,
@@ -2673,6 +2017,9 @@ async function addTracksToDatabase(tracks, res) {
 
         existingTrackCount += 1;
         const updateResult = await updateExistingTrack(concurrentExistingTrack, track);
+        if (updateResult.rows[0] && updateResult.rows[0].id) {
+          await learnSelectorAndReactivate(track, concurrentExistingTrack.id);
+        }
         if (
           updateResult.rows[0] &&
           updateResult.rows[0].id &&
@@ -2754,697 +2101,6 @@ async function updatePrice(newPrice, track) {
     priceAfter: newPrice,
     active: Boolean(track.active)
   });
-}
-
-async function queueEmail(email) {
-  const startedAt = Date.now();
-  const queuedAt = email.created_at || new Date();
-  email.created_at = queuedAt;
-  email.delivered = false;
-  email.status = 'pending';
-  email.error_message = null;
-  email.sent_at = null;
-  email.attempt_count = 0;
-  email.last_attempt_at = null;
-  email.next_send_at = queuedAt;
-  await insertEmail(email);
-  return Date.now() - startedAt;
-}
-
-async function deliverPendingEmails(options = {}) {
-  const allPendingCount = await getPendingEmailCount();
-  const pendingEmails = await getPendingEmailLogs(options);
-  const deferredCount = Math.max(0, allPendingCount - pendingEmails.length);
-
-  if (pendingEmails.length === 0) {
-    return {
-      pendingCount: allPendingCount,
-      dueCount: 0,
-      deferredCount,
-      sentCount: 0,
-      undeliverableCount: 0,
-      skippedCount: 0
-    };
-  }
-
-  const sendEmailsEnabled = await getAppConfig('email.send_enabled', constants.email.sendEmail);
-  if (!sendEmailsEnabled) {
-    console.info('[crawler] Pending email delivery skipped because email sending is disabled', {
-      pendingCount: allPendingCount,
-      dueCount: pendingEmails.length
-    });
-    return {
-      pendingCount: allPendingCount,
-      dueCount: pendingEmails.length,
-      deferredCount,
-      sentCount: 0,
-      undeliverableCount: 0,
-      skippedCount: pendingEmails.length
-    };
-  }
-
-  const configuredTransportMode = await getEmailTransportMode();
-  let deliveryContext = null;
-
-  try {
-    deliveryContext = await createEmailTransport({ transportMode: configuredTransportMode });
-  } catch (error) {
-    if (error && error.code === 'EMAIL_CONFIG_MISSING') {
-      console.error('[crawler] Pending email delivery skipped because configuration is incomplete', {
-        pendingCount: allPendingCount,
-        dueCount: pendingEmails.length,
-        transportMode: configuredTransportMode,
-        ...(error.details || {})
-      });
-      return {
-        pendingCount: allPendingCount,
-        dueCount: pendingEmails.length,
-        deferredCount,
-        sentCount: 0,
-        undeliverableCount: 0,
-        skippedCount: pendingEmails.length
-      };
-    }
-
-    throw error;
-  }
-
-  const summary = {
-    pendingCount: allPendingCount,
-    dueCount: pendingEmails.length,
-    deferredCount,
-    sentCount: 0,
-    undeliverableCount: 0,
-    skippedCount: 0
-  };
-
-  for (const pendingEmail of pendingEmails) {
-    const deliveryResult = await deliverPendingEmail(pendingEmail, deliveryContext);
-
-    if (deliveryResult.status === 'sent') {
-      summary.sentCount += 1;
-    } else if (deliveryResult.status === 'undeliverable') {
-      summary.undeliverableCount += 1;
-    } else {
-      summary.skippedCount += 1;
-    }
-  }
-
-  console.info('[crawler] Pending email delivery finished', summary);
-  return summary;
-}
-
-async function deliverPendingEmail(emailLog, deliveryContext) {
-  let attemptCount = Number(emailLog.attempt_count) || 0;
-  const retryDelayMs = await getEmailRetryDelayMs();
-
-  if (attemptCount >= MAX_EMAIL_DELIVERY_ATTEMPTS) {
-    await updateEmailLog(emailLog.id, {
-      status: 'undeliverable',
-      errorMessage: emailLog.error_message || `Failed to deliver after ${MAX_EMAIL_DELIVERY_ATTEMPTS} attempts.`,
-      delivered: false,
-      sentAt: null,
-      attemptCount,
-      lastAttemptAt: emailLog.last_attempt_at || new Date(),
-      nextSendAt: null
-    });
-    return { status: 'undeliverable' };
-  }
-
-  while (attemptCount < MAX_EMAIL_DELIVERY_ATTEMPTS) {
-    attemptCount += 1;
-    const attemptedAt = new Date();
-
-    try {
-      const info = await sendQueuedEmailWithContext(emailLog, deliveryContext);
-
-      await updateEmailLog(emailLog.id, {
-        status: 'sent',
-        errorMessage: null,
-        delivered: true,
-        sentAt: new Date(),
-        attemptCount,
-        lastAttemptAt: attemptedAt,
-        nextSendAt: null
-      });
-
-      console.info('[crawler] Email sent', {
-        emailLogId: emailLog.id,
-        trackId: emailLog.track_id,
-        recipient: emailLog.email,
-        transportMode: deliveryContext.transportMode,
-        attemptCount,
-        response: info.response || info.messageId || null
-      });
-
-      return { status: 'sent' };
-    } catch (error) {
-      const hasAttemptsRemaining = attemptCount < MAX_EMAIL_DELIVERY_ATTEMPTS;
-      const status = hasAttemptsRemaining ? 'pending' : 'undeliverable';
-      const nextSendAt = hasAttemptsRemaining
-        ? new Date(attemptedAt.getTime() + retryDelayMs)
-        : null;
-
-      await updateEmailLog(emailLog.id, {
-        status,
-        errorMessage: error.message,
-        delivered: false,
-        sentAt: null,
-        attemptCount,
-        lastAttemptAt: attemptedAt,
-        nextSendAt
-      });
-
-      console.error('[crawler] Failed to deliver queued email', {
-        emailLogId: emailLog.id,
-        trackId: emailLog.track_id,
-        recipient: emailLog.email,
-        transportMode: deliveryContext.transportMode,
-        attemptCount,
-        status,
-        error
-      });
-
-      if (!hasAttemptsRemaining) {
-        return { status: 'undeliverable' };
-      }
-    }
-  }
-
-  return { status: 'undeliverable' };
-}
-
-async function sendQueuedEmailWithContext(emailLog, deliveryContext) {
-  if (deliveryContext.transportMode === 'ses') {
-    const emailBody = {};
-
-    if (emailLog.body) {
-      emailBody.Text = {
-        Data: emailLog.body,
-        Charset: 'UTF-8'
-      };
-    }
-
-    if (emailLog.html_body) {
-      emailBody.Html = {
-        Data: emailLog.html_body,
-        Charset: 'UTF-8'
-      };
-    }
-
-    const command = new SendEmailCommand({
-      FromEmailAddress: deliveryContext.senderAddress,
-      Destination: {
-        ToAddresses: [emailLog.email]
-      },
-      Content: {
-        Simple: {
-          Subject: {
-            Data: emailLog.subject || '',
-            Charset: 'UTF-8'
-          },
-          Body: emailBody
-        }
-      }
-    });
-
-    const response = await deliveryContext.sesClient.send(command);
-    return {
-      messageId: response.MessageId || null,
-      response: response.MessageId || null
-    };
-  }
-
-  return deliveryContext.transporter.sendMail({
-    from: deliveryContext.senderAddress,
-    to: emailLog.email,
-    subject: emailLog.subject,
-    text: emailLog.body,
-    html: emailLog.html_body || undefined
-  });
-}
-
-async function createEmailTransport({ emailAddress, transportMode = null }) {
-  const resolvedTransportMode = transportMode || await getEmailTransportMode();
-  const resolvedEmailAddress = resolvedTransportMode === 'ses'
-    ? await getAppConfig('email.ses_address', constants.email.sesAddress)
-    : (emailAddress || await getAppConfig('email.address', keys.email && keys.email.address));
-
-  if (!resolvedEmailAddress) {
-    throw createMissingEmailConfigError(
-      resolvedTransportMode === 'ses'
-        ? 'Email configuration is incomplete. Expected email.ses_address for outgoing SES mail.'
-        : 'Email configuration is incomplete. Expected email.address for outgoing mail.',
-      {
-        transportMode: resolvedTransportMode,
-        hasAddress: Boolean(resolvedEmailAddress)
-      }
-    );
-  }
-
-  if (resolvedTransportMode === 'ses') {
-    const awsConfig = getAwsMailConfig();
-
-    if (!awsConfig.accessKeyId || !awsConfig.secretAccessKey || !awsConfig.region) {
-      throw createMissingEmailConfigError(
-        'Email configuration is incomplete for SES. Expected aws access key, secret access key and region.',
-        {
-          transportMode: resolvedTransportMode,
-          hasAccessKeyId: Boolean(awsConfig.accessKeyId),
-          hasSecretAccessKey: Boolean(awsConfig.secretAccessKey),
-          hasRegion: Boolean(awsConfig.region)
-        }
-      );
-    }
-
-    const sesClient = new SESv2Client({
-      region: awsConfig.region,
-      credentials: {
-        accessKeyId: awsConfig.accessKeyId,
-        secretAccessKey: awsConfig.secretAccessKey
-      }
-    });
-
-    return {
-      senderAddress: resolvedEmailAddress,
-      transportMode: resolvedTransportMode,
-      sesClient
-    };
-  }
-
-  const emailService = await getAppConfig('email.service', keys.email && keys.email.service);
-  const emailPassword = await getAppConfig('email.password', keys.email && keys.email.password);
-
-  if (!emailService || !emailPassword) {
-    throw createMissingEmailConfigError(
-      'Email configuration is incomplete for SMTP. Expected email.service, email.address and email.password.',
-      {
-        transportMode: resolvedTransportMode,
-        hasService: Boolean(emailService),
-        hasAddress: Boolean(resolvedEmailAddress),
-        hasPassword: Boolean(emailPassword)
-      }
-    );
-  }
-
-  return {
-    senderAddress: resolvedEmailAddress,
-    transportMode: resolvedTransportMode,
-    transporter: nodemailer.createTransport({
-      service: emailService,
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000,
-      auth: {
-        user: resolvedEmailAddress,
-        pass: emailPassword
-      }
-    })
-  };
-}
-
-async function getEmailTransportMode() {
-  const configuredTransportMode = await getAppConfig(
-    'email.transport_mode',
-    constants.email.transportMode
-  );
-  return normalizeEmailTransportMode(configuredTransportMode);
-}
-
-function normalizeEmailTransportMode(value) {
-  const normalizedValue = String(value || '').trim().toLowerCase();
-  if (normalizedValue === 'ses') {
-    return 'ses';
-  }
-
-  return 'smtp';
-}
-
-function createMissingEmailConfigError(message, details) {
-  const error = new Error(message);
-  error.code = 'EMAIL_CONFIG_MISSING';
-  error.details = details;
-  return error;
-}
-
-function getAwsMailConfig() {
-  const awsConfig = keys.aws || {};
-  return {
-    accessKeyId: awsConfig.AWS_ACCESS_KEY_ID || awsConfig.accessKeyId || process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: awsConfig.AWS_SECRET_ACCESS_KEY || awsConfig.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '',
-    region: awsConfig.AWS_REGION || awsConfig.region || process.env.AWS_REGION || ''
-  };
-}
-
-async function sendPriceUpdateEmail(track, options = {}) {
-  const renderedEmail = await renderEmailTemplate('price_change', {
-    productName: track.product_name,
-    productUrl: track.price_url,
-    originalPrice: track.orig_price,
-    previousPrice: options.previousPrice,
-    currentPrice: track.curr_price
-  });
-
-  const email = {
-    track_id: track.id,
-    product_name: track.product_name,
-    orig_price: track.orig_price,
-    curr_price: track.curr_price,
-    email: track.email,
-    email_type: 'price_change',
-    template_key: renderedEmail.templateKey,
-    delivered: false,
-    created_at: new Date(),
-    subject: renderedEmail.subject,
-    body: renderedEmail.text,
-    html_body: renderedEmail.html
-  };
-  return queueEmail(email);
-}
-
-async function sendTrackInactiveEmail(track) {
-  const renderedEmail = await renderEmailTemplate('track_inactive', {
-    productName: track.product_name,
-    productUrl: track.price_url,
-    originalPrice: track.orig_price
-  });
-
-  const email = {
-    track_id: track.id,
-    product_name: track.product_name,
-    orig_price: track.orig_price,
-    curr_price: null,
-    email: track.email,
-    email_type: 'track_inactive',
-    template_key: renderedEmail.templateKey,
-    delivered: false,
-    created_at: new Date(),
-    subject: renderedEmail.subject,
-    body: renderedEmail.text,
-    html_body: renderedEmail.html
-  };
-  return queueEmail(email);
-}
-
-async function sendImmediateTemplateEmail({
-  templateKey,
-  recipientEmail,
-  emailType = templateKey,
-  trackId = null,
-  productName = null,
-  originalPrice = null,
-  currentPrice = null,
-  templateData = {}
-}) {
-  const renderedEmail = await renderEmailTemplate(templateKey, templateData);
-
-  const email = {
-    track_id: trackId,
-    product_name: productName,
-    orig_price: originalPrice,
-    curr_price: currentPrice,
-    email: recipientEmail,
-    email_type: emailType,
-    template_key: renderedEmail.templateKey,
-    delivered: false,
-    created_at: new Date(),
-    status: 'pending',
-    subject: renderedEmail.subject,
-    body: renderedEmail.text,
-    html_body: renderedEmail.html
-  };
-
-  const emailLog = await insertEmail(email);
-  if (!emailLog) {
-    throw new Error('Failed to create email log');
-  }
-
-  const deliveryContext = await createEmailTransport({});
-  const deliveryResult = await deliverPendingEmail(emailLog, deliveryContext);
-
-  if (deliveryResult.status !== 'sent') {
-    throw new Error('Failed to send email');
-  }
-
-  return {
-    emailLogId: emailLog.id,
-    recipient: recipientEmail,
-    subject: renderedEmail.subject,
-    status: deliveryResult.status
-  };
-}
-
-async function sendTemplateTestEmail({
-  templateKey,
-  recipientEmail,
-  productName,
-  productUrl,
-  originalPrice = null,
-  previousPrice = null,
-  currentPrice = null
-}) {
-  return sendImmediateTemplateEmail({
-    templateKey,
-    recipientEmail,
-    emailType: templateKey,
-    productName,
-    originalPrice,
-    currentPrice,
-    templateData: {
-      productName,
-      productUrl,
-      originalPrice,
-      previousPrice,
-      currentPrice
-    }
-  });
-}
-
-let emailLogTableReadyPromise = null;
-
-async function ensureEmailLogTable() {
-  if (!emailLogTableReadyPromise) {
-    emailLogTableReadyPromise = ensureEmailLogTableColumns().catch((error) => {
-      emailLogTableReadyPromise = null;
-      throw error;
-    });
-  }
-
-  await emailLogTableReadyPromise;
-}
-
-async function ensureEmailLogTableColumns() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS email_logs (
-      "id" serial PRIMARY KEY,
-      "track_id" integer,
-      "product_name" varchar(64),
-      "orig_price" numeric,
-      "curr_price" numeric,
-      "email" varchar(256),
-      "email_type" varchar(64),
-      "template_key" varchar(64),
-      "status" varchar(32),
-      "subject" text,
-      "body" text,
-      "html_body" text,
-      "error_message" text,
-      "delivered" boolean,
-      "sent_at" timestamp,
-      "attempt_count" integer NOT NULL DEFAULT 0,
-      "last_attempt_at" timestamp,
-      "next_send_at" timestamp,
-      "created_at" timestamp
-    )
-  `);
-
-  await query(`
-    ALTER TABLE email_logs
-      ADD COLUMN IF NOT EXISTS track_id integer,
-      ADD COLUMN IF NOT EXISTS product_name varchar(64),
-      ADD COLUMN IF NOT EXISTS orig_price numeric,
-      ADD COLUMN IF NOT EXISTS curr_price numeric,
-      ADD COLUMN IF NOT EXISTS email varchar(256),
-      ADD COLUMN IF NOT EXISTS email_type varchar(64),
-      ADD COLUMN IF NOT EXISTS template_key varchar(64),
-      ADD COLUMN IF NOT EXISTS status varchar(32),
-      ADD COLUMN IF NOT EXISTS subject text,
-      ADD COLUMN IF NOT EXISTS body text,
-      ADD COLUMN IF NOT EXISTS html_body text,
-      ADD COLUMN IF NOT EXISTS error_message text,
-      ADD COLUMN IF NOT EXISTS delivered boolean,
-      ADD COLUMN IF NOT EXISTS sent_at timestamp,
-      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS last_attempt_at timestamp,
-      ADD COLUMN IF NOT EXISTS next_send_at timestamp,
-      ADD COLUMN IF NOT EXISTS created_at timestamp
-  `);
-}
-
-async function insertEmail(email) {
-  try {
-    await ensureEmailLogTable();
-    // Insert email data into the database
-    const result = await query(
-      `INSERT INTO email_logs (
-        track_id,
-        product_name,
-        orig_price,
-        curr_price,
-        email,
-        email_type,
-        template_key,
-        status,
-        subject,
-        body,
-        html_body,
-        error_message,
-        delivered,
-        sent_at,
-        attempt_count,
-        last_attempt_at,
-        next_send_at,
-        created_at
-      )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-       RETURNING *`,
-      [
-        email.track_id,
-        email.product_name,
-        email.orig_price,
-        email.curr_price,
-        email.email,
-        email.email_type || 'generic',
-        email.template_key || null,
-        email.status || (email.delivered ? 'sent' : 'pending'),
-        email.subject || null,
-        email.body || null,
-        email.html_body || null,
-        email.error_message || null,
-        email.delivered,
-        email.sent_at || null,
-        Number.isFinite(email.attempt_count) ? email.attempt_count : 0,
-        email.last_attempt_at || null,
-        email.next_send_at || email.created_at || new Date(),
-        email.created_at
-      ]
-    );
-
-    console.info('[crawler] Email log inserted', {
-      emailLogId: result.rows[0].id,
-      trackId: email.track_id,
-      status: result.rows[0].status
-    });
-    return result.rows[0];
-  } catch (error) {
-    console.error('[crawler] Failed to insert email log', {
-      trackId: email.track_id,
-      recipient: email.email,
-      error
-    });
-    return null;
-  }
-}
-
-async function getPendingEmailLogs(options = {}) {
-  await ensureEmailLogTable();
-  const whereClause = options.ignoreSchedule
-    ? `status IN ('pending', 'skipped_disabled', 'skipped_missing_config')`
-    : `status IN ('pending', 'skipped_disabled', 'skipped_missing_config')
-       AND (next_send_at IS NULL OR next_send_at <= NOW())`;
-  const result = await query(
-    `SELECT *
-     FROM email_logs
-     WHERE ${whereClause}
-     ORDER BY created_at ASC NULLS LAST, id ASC`
-  );
-
-  return result.rows;
-}
-
-async function getPendingEmailCount() {
-  await ensureEmailLogTable();
-  const result = await query(
-    `SELECT COUNT(*)::int AS total
-     FROM email_logs
-     WHERE status IN ('pending', 'skipped_disabled', 'skipped_missing_config')`
-  );
-
-  return result.rows[0] ? result.rows[0].total : 0;
-}
-
-async function updateEmailLog(emailLogId, {
-  status,
-  errorMessage = null,
-  delivered = false,
-  sentAt = null,
-  attemptCount = 0,
-  lastAttemptAt = null,
-  nextSendAt = null
-}) {
-  await ensureEmailLogTable();
-  await query(
-    `UPDATE email_logs
-     SET status = $2,
-         error_message = $3,
-         delivered = $4,
-         sent_at = $5,
-         attempt_count = $6,
-         last_attempt_at = $7,
-         next_send_at = $8
-     WHERE id = $1`,
-    [
-      emailLogId,
-      status,
-      errorMessage,
-      delivered,
-      sentAt,
-      attemptCount,
-      lastAttemptAt,
-      nextSendAt
-    ]
-  );
-}
-
-async function batchUpdateEmailLogs(emailLogIds, {
-  status,
-  errorMessage = null,
-  delivered = false,
-  sentAt = null,
-  lastAttemptAt = null,
-  nextSendAt = null
-}) {
-  if (!emailLogIds || emailLogIds.length === 0) {
-    return;
-  }
-
-  await ensureEmailLogTable();
-  await query(
-    `UPDATE email_logs
-     SET status = $2,
-         error_message = $3,
-         delivered = $4,
-         sent_at = $5,
-         last_attempt_at = $6,
-         next_send_at = $7
-     WHERE id = ANY($1::int[])`,
-    [
-      emailLogIds,
-      status,
-      errorMessage,
-      delivered,
-      sentAt,
-      lastAttemptAt,
-      nextSendAt
-    ]
-  );
-}
-
-async function getEmailRetryDelayMs() {
-  const retryDelayMs = await getAppConfig('email.retry_delay_ms', constants.email.retryDelayMs);
-  return Number.isFinite(retryDelayMs) && retryDelayMs >= 0
-    ? retryDelayMs
-    : constants.email.retryDelayMs;
 }
 
 function extractNumber(price) {
@@ -3536,6 +2192,30 @@ function arePricesEqual(left, right) {
   return Number(left) === Number(right);
 }
 
+async function saveHTMLFile(html, metadata) {
+  const fileName = buildHtmlFilePath(metadata);
+  fs.mkdirSync(path.dirname(fileName), { recursive: true });
+
+  try {
+    await fs.promises.writeFile(fileName, html, 'utf8');
+    console.info('[crawler] HTML file saved', {
+      fileName,
+      action: metadata.action,
+      trackId: metadata.trackId || null
+    });
+  } catch (error) {
+    console.error('[crawler] Failed to save HTML file', {
+      fileName,
+      action: metadata.action,
+      trackId: metadata.trackId || null,
+      error
+    });
+    throw error;
+  }
+
+  return fileName;
+}
+
 async function shouldSaveHtml(action, failedOnly) {
   const isUpdateAction = action === 'update';
   const enabled = await getAppConfig(
@@ -3620,7 +2300,7 @@ async function processTrackUpdate(track, runId) {
   try {
     const fetchResult = await fetchTrackUpdateHtml(track, runId);
     if (await shouldSaveHtml('update', false)) {
-      saveHTMLFile(fetchResult.html, {
+      await saveHTMLFile(fetchResult.html, {
         action: 'update',
         trackId: track.id,
         userId: track.user_id,
@@ -3700,7 +2380,7 @@ async function processTrackUpdateGroup(trackGroup, runId) {
   }
 
   if (await shouldSaveHtml('update', false)) {
-    saveHTMLFile(fetchResult.html, {
+    await saveHTMLFile(fetchResult.html, {
       action: 'update',
       trackId: sharedTrack.id,
       userId: sharedTrack.user_id,
@@ -3915,3 +2595,4 @@ function applyRunItemToSummary(summary, item) {
     summary.error_count += 1;
   }
 }
+

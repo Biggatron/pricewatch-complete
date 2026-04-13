@@ -29,6 +29,7 @@
         <button class="admin-tab-button <%= activeTab === 'jobs' ? 'is-active' : '' %>" type="button" data-tab-target="jobs" role="tab" aria-selected="<%= activeTab === 'jobs' ? 'true' : 'false' %>">Job Schedule</button>
         <button class="admin-tab-button <%= activeTab === 'tracks' ? 'is-active' : '' %>" type="button" data-tab-target="tracks" role="tab" aria-selected="<%= activeTab === 'tracks' ? 'true' : 'false' %>">Track Manager</button>
         <button class="admin-tab-button <%= activeTab === 'domains' ? 'is-active' : '' %>" type="button" data-tab-target="domains" role="tab" aria-selected="<%= activeTab === 'domains' ? 'true' : 'false' %>">Domains</button>
+        <button class="admin-tab-button <%= activeTab === 'selectors' ? 'is-active' : '' %>" type="button" data-tab-target="selectors" role="tab" aria-selected="<%= activeTab === 'selectors' ? 'true' : 'false' %>">Selectors</button>
         <button class="admin-tab-button <%= activeTab === 'config' ? 'is-active' : '' %>" type="button" data-tab-target="config" role="tab" aria-selected="<%= activeTab === 'config' ? 'true' : 'false' %>">Config</button>
         <button class="admin-tab-button <%= activeTab === 'cache' ? 'is-active' : '' %>" type="button" data-tab-target="cache" role="tab" aria-selected="<%= activeTab === 'cache' ? 'true' : 'false' %>">Cache</button>
         <button class="admin-tab-button <%= activeTab === 'service-logs' ? 'is-active' : '' %>" type="button" data-tab-target="service-logs" role="tab" aria-selected="<%= activeTab === 'service-logs' ? 'true' : 'false' %>">Service Logs</button>
@@ -508,6 +509,111 @@
         </div>
       </section>
 
+      <section class="admin-tab-panel <%= activeTab === 'selectors' ? 'is-active' : '' %>" data-tab-panel="selectors">
+        <div class="admin-panel">
+          <h2 class="admin-section-title">Domain price selectors</h2>
+          <p class="admin-subtitle">Filtered rows from <code>domain_price_selectors</code></p>
+          <form class="admin-filter-form" method="GET" action="/admin" autocomplete="off">
+            <input type="hidden" name="tab" value="selectors" autocomplete="off">
+            <label>
+              <span>Search</span>
+              <input class="admin-input" type="text" name="selector_search" value="<%= selectorFilters.search %>" placeholder="Domain, template, type, or selector" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>Type</span>
+              <select class="admin-input" name="selector_type">
+                <option value="all" <%= selectorFilters.selectorType === 'all' ? 'selected' : '' %>>All</option>
+                <option value="json_ld" <%= selectorFilters.selectorType === 'json_ld' ? 'selected' : '' %>>JSON-LD</option>
+                <option value="next_data" <%= selectorFilters.selectorType === 'next_data' ? 'selected' : '' %>>Next data</option>
+                <option value="css" <%= selectorFilters.selectorType === 'css' ? 'selected' : '' %>>CSS</option>
+                <option value="html_id" <%= selectorFilters.selectorType === 'html_id' ? 'selected' : '' %>>HTML id</option>
+              </select>
+            </label>
+            <label>
+              <span>Active</span>
+              <select class="admin-input" name="selector_active">
+                <option value="all" <%= selectorFilters.active === 'all' ? 'selected' : '' %>>All</option>
+                <option value="active" <%= selectorFilters.active === 'active' ? 'selected' : '' %>>Active</option>
+                <option value="inactive" <%= selectorFilters.active === 'inactive' ? 'selected' : '' %>>Inactive</option>
+              </select>
+            </label>
+            <label>
+              <span>HTML mode</span>
+              <select class="admin-input" name="selector_javascript">
+                <option value="all" <%= selectorFilters.javascript === 'all' ? 'selected' : '' %>>All</option>
+                <option value="html" <%= selectorFilters.javascript === 'html' ? 'selected' : '' %>>Direct HTML</option>
+                <option value="js" <%= selectorFilters.javascript === 'js' ? 'selected' : '' %>>Headless browser</option>
+              </select>
+            </label>
+            <label>
+              <span>Sort</span>
+              <select class="admin-input" name="selector_sort">
+                <option value="updated_desc" <%= selectorFilters.sort === 'updated_desc' ? 'selected' : '' %>>Recently updated</option>
+                <option value="updated_asc" <%= selectorFilters.sort === 'updated_asc' ? 'selected' : '' %>>Oldest updated</option>
+                <option value="verified_desc" <%= selectorFilters.sort === 'verified_desc' ? 'selected' : '' %>>Latest verified</option>
+                <option value="verified_asc" <%= selectorFilters.sort === 'verified_asc' ? 'selected' : '' %>>Oldest verified</option>
+                <option value="success_desc" <%= selectorFilters.sort === 'success_desc' ? 'selected' : '' %>>Most successful</option>
+                <option value="success_asc" <%= selectorFilters.sort === 'success_asc' ? 'selected' : '' %>>Least successful</option>
+                <option value="domain_asc" <%= selectorFilters.sort === 'domain_asc' ? 'selected' : '' %>>Domain A-Z</option>
+                <option value="domain_desc" <%= selectorFilters.sort === 'domain_desc' ? 'selected' : '' %>>Domain Z-A</option>
+              </select>
+            </label>
+            <label>
+              <span>Max rows</span>
+              <input class="admin-input" type="number" name="selector_max_rows" min="1" max="500" value="<%= selectorFilters.maxRows %>" autocomplete="off">
+            </label>
+            <div class="admin-filter-actions">
+              <button class="btn btn-small" type="submit">Apply</button>
+              <a class="btn btn-small admin-cancel-btn admin-link-button" href="/admin?tab=selectors">Reset</a>
+            </div>
+          </form>
+          <% if (!domainPriceSelectors || domainPriceSelectors.length === 0) { %>
+            <p>No domain price selectors found.</p>
+          <% } else { %>
+            <div class="admin-table-scroll">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Domain</th>
+                    <th>Template</th>
+                    <th>Type</th>
+                    <th>Selector</th>
+                    <th>HTML mode</th>
+                    <th>Source track</th>
+                    <th>Success</th>
+                    <th>Failure</th>
+                    <th>Verified</th>
+                    <th>Failed</th>
+                    <th>Active</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% domainPriceSelectors.forEach((selector) => { %>
+                    <tr>
+                      <td><%= selector.id %></td>
+                      <td><%= selector.domain || '-' %></td>
+                      <td><%= selector.template_key || '-' %></td>
+                      <td><%= selector.selector_type || '-' %></td>
+                      <td class="admin-url-cell"><code><%= selector.selector_value || '-' %></code></td>
+                      <td><%= selector.requires_javascript ? 'Headless browser' : 'Direct HTML' %></td>
+                      <td><%= selector.source_track_id || '-' %></td>
+                      <td><%= selector.success_count == null ? 0 : selector.success_count %></td>
+                      <td><%= selector.failure_count == null ? 0 : selector.failure_count %></td>
+                      <td><%= selector.last_verified_at ? new Date(selector.last_verified_at).toLocaleString() : '-' %></td>
+                      <td><%= selector.last_failed_at ? new Date(selector.last_failed_at).toLocaleString() : '-' %></td>
+                      <td><%= selector.is_active ? 'Yes' : 'No' %></td>
+                      <td><%= selector.updated_at ? new Date(selector.updated_at).toLocaleString() : '-' %></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </section>
+
       <section class="admin-tab-panel <%= activeTab === 'config' ? 'is-active' : '' %>" data-tab-panel="config">
         <div class="admin-panel">
           <h2 class="admin-section-title">Config table</h2>
@@ -555,6 +661,7 @@
                             type="<%= config.data_type === 'integer' || config.data_type === 'number' ? 'number' : config.data_type === 'secret' ? 'password' : 'text' %>"
                             <%= config.data_type === 'integer' ? 'step="1"' : '' %>
                             value="<%= config.value == null ? '' : config.value %>"
+                            <%= config.data_type === 'secret' && config.has_stored_value ? `placeholder="${config.masked_value}"` : '' %>
                             autocomplete="<%= config.data_type === 'secret' ? 'new-password' : 'off' %>"
                             autocapitalize="off"
                             spellcheck="false"

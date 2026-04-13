@@ -75,6 +75,23 @@ CREATE TABLE domain_access_profiles (
     "updated_at" timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE domain_price_selectors (
+    "id" serial primary key,
+    "domain" varchar(255) NOT NULL,
+    "template_key" varchar(128) NOT NULL,
+    "selector_type" varchar(32) NOT NULL,
+    "selector_value" text,
+    "requires_javascript" boolean NOT NULL DEFAULT FALSE,
+    "source_track_id" integer,
+    "success_count" integer NOT NULL DEFAULT 0,
+    "failure_count" integer NOT NULL DEFAULT 0,
+    "last_verified_at" timestamp,
+    "last_failed_at" timestamp,
+    "is_active" boolean NOT NULL DEFAULT TRUE,
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
 CREATE TABLE app_config (
     "id" serial primary key,
     "config_key" varchar(128) NOT NULL UNIQUE,
@@ -189,6 +206,12 @@ CREATE INDEX preview_screenshot_cache_expires_at_idx
 
 CREATE INDEX domain_access_profiles_updated_at_idx
     ON domain_access_profiles ("updated_at");
+
+CREATE UNIQUE INDEX domain_price_selectors_domain_template_type_js_unique_idx
+    ON domain_price_selectors ("domain", "template_key", "selector_type", "requires_javascript");
+
+CREATE INDEX domain_price_selectors_domain_active_idx
+    ON domain_price_selectors ("domain", "is_active", "updated_at" DESC);
 
 CREATE INDEX user_account_email_verification_token_hash_idx
     ON user_account ("email_verification_token_hash");

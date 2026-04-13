@@ -8,6 +8,7 @@ const HIDDEN_CONFIG_KEYS = new Set([
   'crawler.schedule.enabled',
   'crawler.schedule.interval_ms'
 ]);
+const MASKED_SECRET_VALUE = '********';
 
 const defaultAppConfig = [
   {
@@ -101,7 +102,7 @@ const defaultAppConfig = [
   {
     config_key: 'email.password',
     category: 'email',
-    value: (keys.email && keys.email.password) || '',
+    value: '',
     data_type: 'secret',
     description: 'The password or app password used to authenticate the sender email account.',
     value_help: 'Secret text value. Keep this private.'
@@ -287,10 +288,23 @@ async function getAllAppConfig() {
 
   return result.rows
     .filter((row) => !HIDDEN_CONFIG_KEYS.has(row.config_key))
-    .map((row) => ({
-      ...row,
-      parsed_value: parseAppConfigValue(row, null)
-    }));
+    .map((row) => sanitizeAppConfigRow(row));
+}
+
+function sanitizeAppConfigRow(row) {
+  const isSecret = row && row.data_type === 'secret';
+  const hasStoredValue = Boolean(row && row.value);
+  const parsedValue = isSecret
+    ? null
+    : parseAppConfigValue(row, null);
+
+  return {
+    ...row,
+    value: isSecret ? '' : row.value,
+    parsed_value: parsedValue,
+    has_stored_value: hasStoredValue,
+    masked_value: isSecret && hasStoredValue ? MASKED_SECRET_VALUE : ''
+  };
 }
 
 function parseAppConfigValue(row, fallbackValue) {

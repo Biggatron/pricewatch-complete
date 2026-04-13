@@ -85,47 +85,21 @@ router.post('/lookup', async (req, res, next) => {
 
   try {
     await ensureTrackSoftDeleteColumn();
+    const lookup = await lookupTrackByUrl(req.user, inputUrl);
 
-    const sameUserResult = await query(
-      `SELECT id, curr_price, product_name
-       FROM track
-       WHERE user_id = $1
-         AND price_url = $2
-         AND deleted = FALSE
-       ORDER BY last_modified_at DESC NULLS LAST, id DESC
-       LIMIT 1`,
-      [req.user.id, inputUrl]
-    );
-
-    if (sameUserResult.rows[0]) {
+    if (lookup.sameUserTrack) {
       return res.status(200).json({
         sameUserTrack: true,
         otherUserTrack: false,
-        trackId: sameUserResult.rows[0].id,
-        currentPrice: sameUserResult.rows[0].curr_price,
-        productName: sameUserResult.rows[0].product_name || null,
-        message: 'You are already tracking this product',
-        code: 'TRACK_EXISTS'
+        ...lookup.sameUserTrack
       });
     }
 
-    const otherUserResult = await query(
-      `SELECT id, curr_price, product_name
-       FROM track
-       WHERE price_url = $1
-         AND deleted = FALSE
-       ORDER BY last_modified_at DESC NULLS LAST, id DESC
-       LIMIT 1`,
-      [inputUrl]
-    );
-
-    if (otherUserResult.rows[0]) {
+    if (lookup.otherUserTrack) {
       return res.status(200).json({
         sameUserTrack: false,
         otherUserTrack: true,
-        trackId: otherUserResult.rows[0].id,
-        currentPrice: otherUserResult.rows[0].curr_price,
-        productName: otherUserResult.rows[0].product_name || null
+        ...lookup.otherUserTrack
       });
     }
 
@@ -134,6 +108,72 @@ router.post('/lookup', async (req, res, next) => {
       otherUserTrack: false,
       currentPrice: null,
       productName: null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/detect', async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Login required' });
+  }
+
+  const inputUrl = String((req.body && req.body.url) || '').trim();
+  if (!inputUrl) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    await ensureTrackSoftDeleteColumn();
+    const lookup = await lookupTrackByUrl(req.user, inputUrl);
+
+    if (lookup.sameUserTrack) {
+      return res.status(200).json({
+        sameUserTrack: true,
+        otherUserTrack: false,
+        selectorFound: false,
+        ...lookup.sameUserTrack
+      });
+    }
+
+    if (lookup.otherUserTrack) {
+      return res.status(200).json({
+        sameUserTrack: false,
+        otherUserTrack: true,
+        selectorFound: true,
+        detectionSource: 'existing_track',
+        currentPrice: lookup.otherUserTrack.currentPrice,
+        currentPriceDisplay: lookup.otherUserTrack.currentPrice,
+        productName: lookup.otherUserTrack.productName || null
+      });
+    }
+
+    const detection = await crawler.detectTrackByUrl({
+      price_url: inputUrl,
+      email: String((req.user && req.user.email) || '').trim(),
+      user_id: req.user ? req.user.id : null
+    });
+
+    if (!detection || !detection.success || !detection.track) {
+      return res.status(200).json({
+        sameUserTrack: false,
+        otherUserTrack: false,
+        selectorFound: false,
+        detectionSource: detection && detection.reason ? detection.reason : 'none'
+      });
+    }
+
+    return res.status(200).json({
+      sameUserTrack: false,
+      otherUserTrack: false,
+      selectorFound: true,
+      detectionSource: detection.selector && detection.selector.selector_type
+        ? detection.selector.selector_type
+        : 'domain_selector',
+      currentPrice: detection.track.curr_price,
+      currentPriceDisplay: detection.track.display_price_text || detection.track.curr_price,
+      productName: detection.track.product_name || null
     });
   } catch (error) {
     next(error);
@@ -212,6 +252,53 @@ router.post('/:id/reactivate/reset', apiAuthCheck, async (req, res, next) => {
     next(error);
   }
 });
+
+async function lookupTrackByUrl(user, inputUrl) {
+  const sameUserResult = await query(
+    `SELECT id, curr_price, product_name
+     FROM track
+     WHERE user_id = $1
+       AND price_url = $2
+       AND deleted = FALSE
+     ORDER BY last_modified_at DESC NULLS LAST, id DESC
+     LIMIT 1`,
+    [user.id, inputUrl]
+  );
+
+  if (sameUserResult.rows[0]) {
+    return {
+      sameUserTrack: {
+        trackId: sameUserResult.rows[0].id,
+        currentPrice: sameUserResult.rows[0].curr_price,
+        productName: sameUserResult.rows[0].product_name || null,
+        message: 'You are already tracking this product',
+        code: 'TRACK_EXISTS'
+      },
+      otherUserTrack: null
+    };
+  }
+
+  const otherUserResult = await query(
+    `SELECT id, curr_price, product_name
+     FROM track
+     WHERE price_url = $1
+       AND deleted = FALSE
+     ORDER BY last_modified_at DESC NULLS LAST, id DESC
+     LIMIT 1`,
+    [inputUrl]
+  );
+
+  return {
+    sameUserTrack: null,
+    otherUserTrack: otherUserResult.rows[0]
+      ? {
+        trackId: otherUserResult.rows[0].id,
+        currentPrice: otherUserResult.rows[0].curr_price,
+        productName: otherUserResult.rows[0].product_name || null
+      }
+      : null
+  };
+}
 
 async function getTracks(user, res) {
   await ensureTrackSoftDeleteColumn();

@@ -13,7 +13,7 @@
 <main class="themed-main new-track-main">
   <section class="page-shell page-shell-wide">
     <div class="page-card-panel track-builder-form-panel">
-      <div class="track-builder-form">
+      <div class="track-builder-form track-builder-form-url-only" id="trackBuilderForm">
         <% if (!user) { %>
           <label class="theme-field" for="email">
             <span class="theme-label">Email</span>
@@ -37,7 +37,7 @@
           </div>
         </label>
 
-        <label class="theme-field" for="price">
+        <label class="theme-field display-none" id="priceFieldWrap" for="price">
           <span class="theme-label track-price-label">
             <span>Product price</span>
             <span class="track-help-wrap">
@@ -52,7 +52,7 @@
           <input class="theme-input" type="text" name="target_price" id="price" placeholder="e.g. 2999" autocomplete="off" inputmode="decimal">
         </label>
 
-        <button class="btn track-submit-btn" id="track-price-button" type="button" onClick="trackPrice()">Track</button>
+        <button class="btn track-submit-btn display-none" id="track-price-button" type="button" onClick="trackPrice()">Track</button>
       </div>
     </div>
 
@@ -69,10 +69,17 @@
 <div class="track-result-modal display-none" id="track-result-modal">
   <div class="track-result-modal-backdrop" onclick="closeTrackResultModal()"></div>
   <div class="track-result-modal-content">
+    <div class="track-result-loading-overlay display-none" id="track-result-loading-overlay" aria-hidden="true">
+      <div class="track-result-loading-spinner" aria-hidden="true"></div>
+    </div>
     <button class="track-result-close-button" type="button" aria-label="Close popup" onclick="closeTrackResultModal()">X</button>
     <div class="track-result-message-wrap">
       <div class="track-result-badge" id="track-result-badge">Success</div>
       <p class="track-result-message" id="track-result-message"></p>
+    </div>
+    <div class="track-result-actions display-none" id="track-result-decision-actions">
+      <button class="btn track-result-secondary-button" id="track-result-secondary-action" type="button">Enter price manually</button>
+      <button class="btn track-result-primary-button" id="track-result-primary-action" type="button">Looks good</button>
     </div>
     <div class="track-result-actions display-none" id="track-result-actions">
       <button class="btn track-result-secondary-button" type="button" onclick="prepareAnotherTrack()">Add another track</button>
@@ -90,8 +97,10 @@
 
 <script>
   let loaderEl = document.getElementById("loader");
+  const trackBuilderFormEl = document.getElementById("trackBuilderForm");
   const urlInputEl = document.getElementById("url");
   const priceInputEl = document.getElementById("price");
+  const priceFieldWrapEl = document.getElementById("priceFieldWrap");
   const previewContainerEl = document.getElementById("previewContainer");
   const previewStatusEl = document.getElementById("previewStatus");
   const productIframeEl = document.getElementById("productIframe");
@@ -100,15 +109,21 @@
   const trackResultModalEl = document.getElementById("track-result-modal");
   const trackResultBadgeEl = document.getElementById("track-result-badge");
   const trackResultMessageEl = document.getElementById("track-result-message");
+  const trackResultDecisionActionsEl = document.getElementById("track-result-decision-actions");
+  const trackResultLoadingOverlayEl = document.getElementById("track-result-loading-overlay");
+  const trackResultPrimaryActionEl = document.getElementById("track-result-primary-action");
+  const trackResultSecondaryActionEl = document.getElementById("track-result-secondary-action");
   const trackResultActionsEl = document.getElementById("track-result-actions");
   const trackPriceButtonEl = document.getElementById("track-price-button");
   const pasteUrlButtonEl = document.getElementById("paste-url-button");
   let previewDebounceTimer = null;
   let previewAbortController = null;
   let previewRequestId = 0;
-  let lastAutofilledPrice = '';
   let lastExistingTrackPopupUrl = '';
   let isSubmittingTrack = false;
+  let isTrackResultSaving = false;
+  let detectionRequestId = 0;
+  let pendingDetectedTrack = null;
 
   let user;
   user = '<%- JSON.stringify(user) %>';
@@ -117,11 +132,6 @@
   }
 
   urlInputEl.addEventListener('input', queuePreviewLoad);
-  priceInputEl.addEventListener('input', () => {
-    if (priceInputEl.value !== lastAutofilledPrice) {
-      lastAutofilledPrice = '';
-    }
-  });
 
   function queuePreviewLoad() {
     const url = this.value.trim();
@@ -133,12 +143,15 @@
     }
 
     if (!url) {
+      pendingDetectedTrack = null;
+      hideManualPriceEntry();
       clearPreview();
       return;
     }
 
     previewDebounceTimer = setTimeout(() => {
       loadPreview(url);
+      detectTrackCandidate(url);
     }, 250);
   }
 
@@ -164,6 +177,11 @@
       return;
     }
 
+    if (!priceInputEl.value.trim()) {
+      showTrackResultModal('Enter the current product price to continue.');
+      return;
+    }
+
     var track = {
       email: user ? user.email : document.getElementById('email').value,
       url: document.getElementById('url').value,
@@ -175,18 +193,25 @@
   function showTrackResultModal(message, options = {}) {
     const isSuccess = Boolean(options.isSuccess);
     const showActions = Boolean(options.showActions);
+    const showDecisionActions = Boolean(options.showDecisionActions);
     const showBadge = options.showBadge !== false;
 
-    trackResultBadgeEl.innerText = isSuccess ? 'Success' : 'Not added';
+    trackResultBadgeEl.innerText = options.badgeText || (isSuccess ? 'Success' : 'Not added');
     trackResultBadgeEl.classList.toggle('display-none', !showBadge);
     trackResultModalEl.classList.toggle('track-result-success', isSuccess);
     trackResultModalEl.classList.toggle('track-result-failure', !isSuccess);
     trackResultMessageEl.innerText = message;
+    trackResultDecisionActionsEl.classList.toggle('display-none', !showDecisionActions);
     trackResultActionsEl.classList.toggle('display-none', !showActions);
     trackResultModalEl.classList.remove('display-none');
   }
 
   function closeTrackResultModal() {
+    if (isTrackResultSaving) {
+      return;
+    }
+
+    resetTrackResultDecisionActions();
     trackResultModalEl.classList.add('display-none');
   }
 
@@ -194,10 +219,85 @@
     closeTrackResultModal();
     document.getElementById('url').value = '';
     document.getElementById('price').value = '';
-    lastAutofilledPrice = '';
     lastExistingTrackPopupUrl = '';
+    pendingDetectedTrack = null;
+    hideManualPriceEntry();
     clearPreview();
     document.getElementById('url').focus();
+  }
+
+  function resetTrackResultDecisionActions() {
+    isTrackResultSaving = false;
+    trackResultPrimaryActionEl.onclick = null;
+    trackResultSecondaryActionEl.onclick = null;
+    trackResultPrimaryActionEl.textContent = 'Looks good';
+    trackResultSecondaryActionEl.textContent = 'Enter price manually';
+    trackResultPrimaryActionEl.disabled = false;
+    trackResultSecondaryActionEl.disabled = false;
+    trackResultLoadingOverlayEl.classList.add('display-none');
+    trackResultDecisionActionsEl.classList.add('display-none');
+  }
+
+  function setTrackResultSavingState(isSaving) {
+    isTrackResultSaving = isSaving;
+    trackResultPrimaryActionEl.disabled = isSaving;
+    trackResultSecondaryActionEl.disabled = isSaving;
+    trackResultPrimaryActionEl.textContent = isSaving ? 'Saving track...' : 'Looks good';
+    trackResultSecondaryActionEl.textContent = 'Enter price manually';
+    trackResultLoadingOverlayEl.classList.toggle('display-none', !isSaving);
+  }
+
+  function hideManualPriceEntry() {
+    priceFieldWrapEl.classList.add('display-none');
+    trackPriceButtonEl.classList.add('display-none');
+    trackBuilderFormEl.classList.add('track-builder-form-url-only');
+    priceInputEl.value = '';
+  }
+
+  function showManualPriceEntry() {
+    pendingDetectedTrack = null;
+    resetTrackResultDecisionActions();
+    priceFieldWrapEl.classList.remove('display-none');
+    trackPriceButtonEl.classList.remove('display-none');
+    trackBuilderFormEl.classList.remove('track-builder-form-url-only');
+    closeTrackResultModal();
+    priceInputEl.focus();
+  }
+
+  function showDetectedTrackConfirmation(url, details = {}) {
+    pendingDetectedTrack = {
+      url,
+      price: String(details.currentPrice == null ? '' : details.currentPrice),
+      priceDisplay: String(details.currentPriceDisplay == null ? (details.currentPrice == null ? '' : details.currentPrice) : details.currentPriceDisplay),
+      productName: details.productName || 'this product'
+    };
+
+    trackResultPrimaryActionEl.textContent = 'Looks good';
+    trackResultSecondaryActionEl.textContent = 'Enter price manually';
+    trackResultPrimaryActionEl.onclick = confirmDetectedTrack;
+    trackResultSecondaryActionEl.onclick = showManualPriceEntry;
+
+    const productName = pendingDetectedTrack.productName;
+    const price = pendingDetectedTrack.priceDisplay || pendingDetectedTrack.price;
+    showTrackResultModal(
+      `${productName} at ${price} \nDoes this track look right?`,
+      { isSuccess: true, showBadge: true, showDecisionActions: true, badgeText: 'Match found' }
+    );
+  }
+
+  function confirmDetectedTrack() {
+    if (!pendingDetectedTrack) {
+      showManualPriceEntry();
+      return;
+    }
+
+    postTrack({
+      email: user ? user.email : document.getElementById('email').value,
+      url: pendingDetectedTrack.url,
+      price: pendingDetectedTrack.price
+    }, {
+      keepModalOpenWhileSubmitting: true
+    });
   }
 
   function setTrackSubmissionState(isSubmitting) {
@@ -245,13 +345,20 @@
     }
   }
 
-  async function postTrack(track) {
+  async function postTrack(track, options = {}) {
     if (isSubmittingTrack) {
       return;
     }
 
+    const keepModalOpenWhileSubmitting = Boolean(options.keepModalOpenWhileSubmitting);
     setTrackSubmissionState(true);
-    showLoader();
+    pendingDetectedTrack = null;
+    if (keepModalOpenWhileSubmitting) {
+      setTrackResultSavingState(true);
+      showLoader();
+    } else {
+      showLoader();
+    }
     try {
       let response = await fetch("/track",{
         method: 'POST',
@@ -260,6 +367,11 @@
             "Content-type": "application/json; charset=UTF-8"
         }
       });
+
+      if (keepModalOpenWhileSubmitting) {
+        setTrackResultSavingState(false);
+      }
+
       hideLoader();
       const responseBody = await response.json().catch(() => null);
       if (response.status === 201) {
@@ -281,7 +393,7 @@
           responseBody && responseBody.error ? responseBody.error : 'Invalid track input'
         );
       } else if (response.status === 401) {
-        window.location.href = "/pages/login";
+        window.location.href = "/auth/login";
       } else if (response.status === 206) {
         showTrackResultModal(
           responseBody && responseBody.message ? responseBody.message : 'Track partially saved'
@@ -290,6 +402,10 @@
         showTrackResultModal('Something went wrong');
       }
     } catch (err) {
+      if (keepModalOpenWhileSubmitting) {
+        setTrackResultSavingState(false);
+      }
+
       hideLoader();
       showTrackResultModal('Something went wrong');
       console.log(err)
@@ -299,7 +415,7 @@
     }
   }
 
-  ['email', 'url', 'price'].forEach((fieldId) => {
+  ['email', 'price'].forEach((fieldId) => {
     const inputEl = document.getElementById(fieldId);
     if (!inputEl) {
       return;
@@ -308,9 +424,16 @@
     inputEl.addEventListener('keydown', (event) => submitOnEnter(event, trackPrice));
   });
 
-  async function lookupExistingTrack(url) {
+  async function detectTrackCandidate(url) {
+    const requestId = ++detectionRequestId;
+
+    if (!isValidHttpUrl(url)) {
+      hideManualPriceEntry();
+      return;
+    }
+
     try {
-      const response = await fetch('/track/lookup', {
+      const response = await fetch('/track/detect', {
         method: 'POST',
         body: JSON.stringify({ url }),
         headers: {
@@ -319,63 +442,58 @@
       });
 
       const body = await response.json().catch(() => null);
+      if (requestId !== detectionRequestId) {
+        return;
+      }
+
       if (response.status === 401) {
         window.location.href = '/auth/login';
-        return { blocked: true };
+        return;
       }
 
       if (!response.ok) {
-        return { blocked: false };
+        showManualPriceEntry();
+        return;
       }
 
-      return body || {};
+      if (body && body.sameUserTrack) {
+        hideManualPriceEntry();
+        pendingDetectedTrack = null;
+        if (lastExistingTrackPopupUrl !== url || trackResultModalEl.classList.contains('display-none')) {
+          showTrackResultModal(
+            body.message || "You're already tracking this product",
+            { showActions: true, showBadge: false }
+          );
+        }
+        lastExistingTrackPopupUrl = url;
+        return;
+      }
+
+      lastExistingTrackPopupUrl = '';
+
+      if (body && body.selectorFound && body.currentPrice != null) {
+        hideManualPriceEntry();
+        showDetectedTrackConfirmation(url, {
+          currentPrice: body.currentPrice,
+          currentPriceDisplay: body.currentPriceDisplay,
+          productName: body.productName || 'this product'
+        });
+        return;
+      }
+
+      showManualPriceEntry();
     } catch (error) {
       console.log(error);
-      return { blocked: false };
+      if (requestId === detectionRequestId) {
+        showManualPriceEntry();
+      }
     }
-  }
-
-  function maybeAutofillPrice(currentPrice) {
-    if (currentPrice == null) {
-      return;
-    }
-
-    const normalizedPrice = String(currentPrice);
-    if (priceInputEl.value && priceInputEl.value !== lastAutofilledPrice) {
-      return;
-    }
-
-    priceInputEl.value = normalizedPrice;
-    lastAutofilledPrice = normalizedPrice;
   }
 
   async function loadPreview(url) {
     if (!isValidHttpUrl(url)) {
       showPreviewMessage('Enter a valid http(s) URL to load a preview.');
       return;
-    }
-
-    const lookupResult = await lookupExistingTrack(url);
-    if (lookupResult && lookupResult.blocked) {
-      return;
-    }
-
-    if (lookupResult && lookupResult.sameUserTrack) {
-      clearPreview();
-      if (lastExistingTrackPopupUrl !== url || trackResultModalEl.classList.contains('display-none')) {
-        showTrackResultModal(
-          lookupResult.message || "You're already tracking this product",
-          { showActions: true, showBadge: false }
-        );
-      }
-      lastExistingTrackPopupUrl = url;
-      return;
-    }
-
-    lastExistingTrackPopupUrl = '';
-
-    if (lookupResult && lookupResult.otherUserTrack) {
-      maybeAutofillPrice(lookupResult.currentPrice);
     }
 
     const requestId = ++previewRequestId;

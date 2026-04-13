@@ -157,6 +157,7 @@
                                 class="btn track-reactivate-btn"
                                 type="button"
                                 data-reactivate-button="<%= track.id %>"
+                                data-track-url="<%= track.price_url %>"
                                 onclick="reactivateTrack(<%= track.id %>, this)">Reactivate</button>
                             <% } %>
                             <button class="btn track-delete-btn" type="button" onclick="deleteTrack(<%= track.id %>)">Delete</button>
@@ -178,7 +179,7 @@
 
 <div class="track-result-modal track-result-success display-none" id="track-reactivation-modal">
   <div class="track-result-modal-backdrop" onclick="closeReactivationPriceModal()"></div>
-  <div class="track-result-modal-content">
+  <div class="track-result-modal-content track-reactivation-modal-content">
     <button
       class="track-result-close-button"
       type="button"
@@ -201,7 +202,15 @@
       </label>
       <div class="track-result-actions track-reset-actions">
         <button class="btn track-result-secondary-button" type="button" onclick="closeReactivationPriceModal()">Cancel</button>
+        <button class="btn track-delete-btn" type="button" id="track-reactivation-delete" onclick="deleteTrackFromReactivationModal()">Delete</button>
         <button class="btn track-result-primary-button" type="button" id="track-reactivation-submit" onclick="submitReactivationPriceModal()">Reset track</button>
+      </div>
+      <div id="track-reactivation-preview-container" class="preview-container track-reactivation-preview display-none">
+        <p id="track-reactivation-preview-status" class="preview-status">Loading preview...</p>
+        <iframe id="track-reactivation-iframe" class="display-none" title="Track reactivation preview" width="100%" height="auto" src=""></iframe>
+        <a id="track-reactivation-image-link" class="preview-image-link display-none" href="" target="_blank" rel="noreferrer">
+          <img id="track-reactivation-image" class="preview-image" alt="Track reactivation preview screenshot">
+        </a>
       </div>
     </div>
   </div>
@@ -220,7 +229,16 @@
   const reactivationMessageEl = document.getElementById("track-reactivation-message");
   const reactivationPriceInputEl = document.getElementById("track-reactivation-price");
   const reactivationSubmitButtonEl = document.getElementById("track-reactivation-submit");
+  const reactivationDeleteButtonEl = document.getElementById("track-reactivation-delete");
+  const reactivationPreviewContainerEl = document.getElementById("track-reactivation-preview-container");
+  const reactivationPreviewStatusEl = document.getElementById("track-reactivation-preview-status");
+  const reactivationIframeEl = document.getElementById("track-reactivation-iframe");
+  const reactivationImageLinkEl = document.getElementById("track-reactivation-image-link");
+  const reactivationImageEl = document.getElementById("track-reactivation-image");
   let pendingReactivationModalResolver = null;
+  let pendingReactivationTrackId = null;
+  let pendingReactivationTrackUrl = '';
+  let reactivationPreviewRequestId = 0;
 
   function showLoader() {
     loaderEl.classList.remove('display-none');
@@ -304,16 +322,110 @@
     buttonEl.innerText = isLoading ? loadingLabel : 'Reactivate';
   }
 
-  function openReactivationPriceModal(message) {
+  function showReactivationPreviewMessage(message) {
+    reactivationPreviewContainerEl.classList.remove('display-none');
+    reactivationPreviewStatusEl.classList.remove('display-none');
+    reactivationPreviewStatusEl.innerText = message;
+    reactivationIframeEl.classList.add('display-none');
+    reactivationIframeEl.src = '';
+    reactivationImageLinkEl.classList.add('display-none');
+    reactivationImageLinkEl.removeAttribute('href');
+    reactivationImageEl.removeAttribute('src');
+  }
+
+  function showReactivationIframePreview(url) {
+    reactivationPreviewContainerEl.classList.remove('display-none');
+    reactivationPreviewStatusEl.classList.add('display-none');
+    reactivationImageLinkEl.classList.add('display-none');
+    reactivationImageEl.removeAttribute('src');
+    reactivationIframeEl.classList.remove('display-none');
+    reactivationIframeEl.src = url;
+  }
+
+  function showReactivationScreenshotPreview(imageUrl, sourceUrl) {
+    reactivationPreviewContainerEl.classList.remove('display-none');
+    reactivationPreviewStatusEl.classList.add('display-none');
+    reactivationIframeEl.classList.add('display-none');
+    reactivationIframeEl.src = '';
+    reactivationImageLinkEl.classList.remove('display-none');
+    reactivationImageLinkEl.href = sourceUrl;
+    reactivationImageEl.src = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+  }
+
+  function clearReactivationPreview() {
+    reactivationPreviewContainerEl.classList.add('display-none');
+    reactivationPreviewStatusEl.classList.remove('display-none');
+    reactivationPreviewStatusEl.innerText = 'Loading preview...';
+    reactivationIframeEl.classList.add('display-none');
+    reactivationIframeEl.src = '';
+    reactivationImageLinkEl.classList.add('display-none');
+    reactivationImageLinkEl.removeAttribute('href');
+    reactivationImageEl.removeAttribute('src');
+  }
+
+  async function loadReactivationPreview(url) {
+    const requestId = ++reactivationPreviewRequestId;
+
+    if (!url) {
+      showReactivationPreviewMessage('Preview unavailable for this track.');
+      return;
+    }
+
+    showReactivationPreviewMessage('Loading preview...');
+
+    try {
+      const response = await fetch('/track/preview', {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+      const body = await response.json().catch(() => null);
+
+      if (requestId !== reactivationPreviewRequestId) {
+        return;
+      }
+
+      if (response.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+
+      if (!response.ok) {
+        showReactivationPreviewMessage(body && body.error ? body.error : 'Failed to load preview.');
+        return;
+      }
+
+      if (body && body.mode === 'screenshot' && body.imageUrl) {
+        showReactivationScreenshotPreview(body.imageUrl, body.url || url);
+        return;
+      }
+
+      showReactivationIframePreview(body && body.url ? body.url : url);
+    } catch (error) {
+      console.log(error);
+      if (requestId === reactivationPreviewRequestId) {
+        showReactivationPreviewMessage('Failed to load preview.');
+      }
+    }
+  }
+
+  function openReactivationPriceModal(message, options = {}) {
     if (pendingReactivationModalResolver) {
       pendingReactivationModalResolver(null);
       pendingReactivationModalResolver = null;
     }
 
+    pendingReactivationTrackId = options.trackId || null;
+    pendingReactivationTrackUrl = String(options.trackUrl || '');
     reactivationMessageEl.innerText = message || 'Could not reactivate this track using the saved price location. Enter the current product price to reset it and try again.';
     reactivationPriceInputEl.value = '';
     reactivationModalEl.classList.remove('display-none');
     reactivationSubmitButtonEl.disabled = false;
+    reactivationDeleteButtonEl.disabled = false;
+    clearReactivationPreview();
+    loadReactivationPreview(pendingReactivationTrackUrl);
 
     window.setTimeout(() => {
       reactivationPriceInputEl.focus();
@@ -327,6 +439,11 @@
   function closeReactivationPriceModal(value = null) {
     reactivationModalEl.classList.add('display-none');
     reactivationSubmitButtonEl.disabled = false;
+    reactivationDeleteButtonEl.disabled = false;
+    pendingReactivationTrackId = null;
+    pendingReactivationTrackUrl = '';
+    reactivationPreviewRequestId += 1;
+    clearReactivationPreview();
 
     if (pendingReactivationModalResolver) {
       const resolve = pendingReactivationModalResolver;
@@ -344,6 +461,16 @@
     }
 
     closeReactivationPriceModal(trimmedValue);
+  }
+
+  function deleteTrackFromReactivationModal() {
+    if (!pendingReactivationTrackId) {
+      return;
+    }
+
+    const trackId = pendingReactivationTrackId;
+    closeReactivationPriceModal();
+    deleteTrack(trackId);
   }
 
   async function resetTrackReactivation(trackId, buttonEl, price) {
@@ -400,7 +527,10 @@
       }
 
       if (response.status === 422 && body && body.allowPriceReset) {
-        const price = await openReactivationPriceModal(body.error);
+        const price = await openReactivationPriceModal(body.error, {
+          trackId,
+          trackUrl: buttonEl && buttonEl.dataset ? buttonEl.dataset.trackUrl : ''
+        });
         if (!price) {
           return;
         }

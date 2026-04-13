@@ -443,6 +443,42 @@
   margin: 0;
 }
 
+.track-reset-form {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1.1rem;
+}
+
+.track-reset-field {
+  gap: 0.38rem;
+}
+
+.track-reset-input {
+  min-height: 48px;
+}
+
+.track-reset-actions {
+  margin-top: 0;
+}
+
+.track-reactivation-modal-content {
+  max-height: min(90vh, 960px);
+  max-width: min(94vw, 980px);
+  min-width: min(94vw, 640px);
+  overflow-y: auto;
+  padding-bottom: 1.1rem;
+}
+
+.track-reactivation-preview {
+  margin-top: 0.35rem;
+  max-width: none;
+  padding: 0.9rem;
+}
+
+.track-reactivation-preview iframe {
+  min-height: min(48vh, 560px);
+}
+
 .track-result-actions {
   display: flex;
   gap: 0.85rem;
@@ -512,6 +548,10 @@
   .track-help-wrap:hover .track-help-tooltip,
   .track-help-wrap:focus-within .track-help-tooltip {
     transform: translateY(0);
+  }
+
+  .track-reactivation-modal-content {
+    min-width: min(94vw, 520px);
   }
 }
 

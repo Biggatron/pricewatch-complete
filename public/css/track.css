@@ -526,8 +526,8 @@
 
 .track-reset-form {
   display: grid;
-  gap: 0.95rem;
-  margin-top: 1.3rem;
+  gap: 0.7rem;
+  margin-top: 1.1rem;
 }
 
 .track-reset-field {
@@ -540,6 +540,24 @@
 
 .track-reset-actions {
   margin-top: 0;
+}
+
+.track-reactivation-modal-content {
+  max-height: min(90vh, 960px);
+  max-width: min(94vw, 980px);
+  min-width: min(94vw, 640px);
+  overflow-y: auto;
+  padding-bottom: 1.1rem;
+}
+
+.track-reactivation-preview {
+  margin-top: 0.35rem;
+  max-width: none;
+  padding: 0.9rem;
+}
+
+.track-reactivation-preview iframe {
+  min-height: min(48vh, 560px);
 }
 
 .track-result-actions {
@@ -605,6 +623,10 @@
   .track-help-wrap:hover .track-help-tooltip,
   .track-help-wrap:focus-within .track-help-tooltip {
     transform: translateY(0);
+  }
+
+  .track-reactivation-modal-content {
+    min-width: min(94vw, 520px);
   }
 }
 @media (max-width: 700px) {
